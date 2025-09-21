@@ -12,17 +12,10 @@ import { Label } from "@/components/ui/label"
 
 type SaveStatus = "idle" | "saving" | "saved" | "error"
 
-function SaveStatusIndicator({ status }: { status: SaveStatus }): React.JSX.Element {
-  let text = "Saved"
-  let colorClass = "text-green-600"
-  if (status === "saving") {
-    text = "Saving..."
-    colorClass = "text-blue-600"
-  }
-  if (status === "idle") {
-    text = "Waiting for input..."
-    colorClass = "text-gray-500"
-  }
+function SaveStatusIndicator({ status, hasUnsavedChanges }: { status: SaveStatus; hasUnsavedChanges: boolean }): React.JSX.Element {
+  // 只在错误状态时显示文字，其他状态只显示指示器
+  let text = ""
+  let colorClass = "text-gray-500"
   if (status === "error") {
     text = "Save failed"
     colorClass = "text-red-600"
@@ -31,11 +24,11 @@ function SaveStatusIndicator({ status }: { status: SaveStatus }): React.JSX.Elem
   return (
     <div className="flex items-center gap-2">
       <div className={`h-2 w-2 rounded-full ${
-        status === "saving" ? "bg-blue-400 animate-pulse" : 
-        status === "saved" ? "bg-green-400" : 
-        status === "error" ? "bg-red-400" : "bg-gray-400"
+        status === "saved" && !hasUnsavedChanges ? "bg-green-400" : 
+        status === "error" ? "bg-red-400" : 
+        hasUnsavedChanges ? "bg-yellow-400" : "bg-gray-400"
       }`} />
-      <span className={`text-sm font-medium ${colorClass}`}>{text}</span>
+      {text && <span className={`text-sm font-medium ${colorClass}`}>{text}</span>}
     </div>
   )
 }
@@ -76,6 +69,7 @@ export default function EditorPanel({
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitStatus, setSubmitStatus] = useState<"idle" | "success" | "error">("idle")
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
 
   // Structured content state
   const [structuredContent, setStructuredContent] = useState<StructuredContent>({
@@ -128,16 +122,29 @@ export default function EditorPanel({
 
 
   const debouncedSnapshotSave = (nextContentObj: Record<string, string>) => {
+    setHasUnsavedChanges(true)
+    
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(async () => {
-      setSaveStatus("saving")
+      // 静默保存，不显示saving状态
       const payload = JSON.stringify({
         field1: nextContentObj.part1_concept1 || "",
         field2: nextContentObj.part1_concept2 || "",
       })
       const result = await saveDocumentSnapshot(payload, groupId)
-      setSaveStatus(result?.success ? "saved" : "error")
-    }, 800)
+      
+      if (result?.success) {
+        setSaveStatus("saved")
+        setHasUnsavedChanges(false)
+      } else {
+        setSaveStatus("error")
+        // 5秒后自动重置为saved状态
+        setTimeout(() => {
+          setSaveStatus("saved")
+          setHasUnsavedChanges(false)
+        }, 5000)
+      }
+    }, 2000) // 增加延迟时间到2秒，减少保存频率
   }
 
   const handleSubmitFinal = async () => {
@@ -267,7 +274,7 @@ export default function EditorPanel({
           
           {/* 右侧状态指示器和操作按钮 */}
           <div className="flex items-center gap-2">
-            <SaveStatusIndicator status={saveStatus} />
+            <SaveStatusIndicator status={saveStatus} hasUnsavedChanges={hasUnsavedChanges} />
             
             {/* 提交按钮 */}
             <Button
