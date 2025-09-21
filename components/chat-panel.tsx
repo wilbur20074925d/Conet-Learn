@@ -51,21 +51,7 @@ function renderMarkdown(text: string) {
 }
 
 // 消息内容组件
-function MessageContent({ content, isNATE, isCurrentUser, isThinking }: { content: string; isNATE: boolean; isCurrentUser?: boolean; isThinking?: boolean }) {
-  // 如果是thinking状态，显示特殊的thinking动画
-  if (isThinking) {
-    return (
-      <div className="text-sm text-purple-600 italic flex items-center gap-2">
-        <div className="flex space-x-1">
-          <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
-          <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
-          <div className="w-2 h-2 bg-purple-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
-        </div>
-        <span>{content}</span>
-      </div>
-    )
-  }
-  
+function MessageContent({ content, isNATE, isCurrentUser }: { content: string; isNATE: boolean; isCurrentUser?: boolean }) {
   // 所有消息都支持markdown渲染
   const markdownContent = renderMarkdown(content)
   
@@ -113,11 +99,6 @@ export default function ChatPanel({ initialMessages, currentUserId, groupId, gro
     } catch (error) {
       console.error('Error polling messages:', error)
     }
-  }
-
-  // 检查是否有thinking消息
-  const hasThinkingMessage = () => {
-    return messages.some(msg => msg.is_thinking && isNATE(msg.user_id))
   }
 
   // 自动滚动到底部的函数
@@ -178,16 +159,11 @@ export default function ChatPanel({ initialMessages, currentUserId, groupId, gro
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
   }, [messages.length])
 
-  // 在thinking状态下进行更频繁的轮询
-  useEffect(() => {
-    if (hasThinkingMessage()) {
-      const interval = setInterval(pollMessages, 1000) // 每秒检查一次
-      return () => clearInterval(interval)
-    }
-  }, [messages, groupId])
-
   // Check if message is from NATE
   const isNATE = (userId: number) => userId === 999
+  
+  // Check if message is NATE's thinking message
+  const isNATEThinking = (msg: Message) => isNATE(msg.user_id) && msg.content === "I am thinking..."
 
   const handleReply = (message: Message) => {
     setReplyingTo(message)
@@ -262,7 +238,9 @@ export default function ChatPanel({ initialMessages, currentUserId, groupId, gro
                     
                     <div
                       className={`rounded-lg p-3 shadow-sm hover:shadow-md transition-shadow duration-200 min-w-0 flex-1 ${
-                        isNATE(msg.user_id)
+                        isNATEThinking(msg)
+                          ? "bg-gradient-to-br from-yellow-100 to-orange-100 text-orange-900 border-2 border-yellow-300 max-w-[200px] sm:max-w-[240px] md:max-w-[280px] shadow-yellow-100"
+                          : isNATE(msg.user_id)
                           ? "bg-gradient-to-br from-purple-100 to-pink-100 text-purple-900 border-2 border-purple-300 max-w-[320px] sm:max-w-[360px] md:max-w-[450px] shadow-purple-100"
                           : "bg-gradient-to-br from-gray-50 to-gray-100 text-gray-800 border border-gray-300 max-w-[280px] sm:max-w-[320px] md:max-w-[400px]"
                       }`}
@@ -284,22 +262,38 @@ export default function ChatPanel({ initialMessages, currentUserId, groupId, gro
                       )}
                       
                       <div className="min-w-0 break-words">
-                        <MessageContent content={msg.content} isNATE={isNATE(msg.user_id)} isCurrentUser={false} isThinking={msg.is_thinking} />
+                        {isNATEThinking(msg) ? (
+                          <div className="flex items-center gap-2 text-orange-800">
+                            <div className="flex space-x-1">
+                              <div className="w-2 h-2 bg-orange-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></div>
+                              <div className="w-2 h-2 bg-orange-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></div>
+                              <div className="w-2 h-2 bg-orange-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></div>
+                            </div>
+                            <span className="text-sm font-medium">I am thinking...</span>
+                          </div>
+                        ) : (
+                          <MessageContent content={msg.content} isNATE={isNATE(msg.user_id)} isCurrentUser={false} />
+                        )}
                       </div>
                       
                       <div className="flex items-center justify-between mt-1">
                         <div className="flex items-center gap-1">
-                          {isNATE(msg.user_id) && (
+                          {isNATE(msg.user_id) && !isNATEThinking(msg) && (
                             <Sparkles className="h-3 w-3 text-purple-600 animate-pulse" />
+                          )}
+                          {isNATEThinking(msg) && (
+                            <div className="h-3 w-3 bg-orange-500 rounded-full animate-pulse" />
                           )}
                           <p
                             className={`text-xs font-medium ${
-                              isNATE(msg.user_id)
+                              isNATEThinking(msg)
+                                ? "text-orange-700 font-semibold"
+                                : isNATE(msg.user_id)
                                 ? "text-purple-700 font-semibold"
                                 : "text-gray-600"
                             }`}
                           >
-                            {isNATE(msg.user_id) ? "🤖 NATE" : msg.name}
+                            {isNATEThinking(msg) ? "🤔 NATE" : isNATE(msg.user_id) ? "🤖 NATE" : msg.name}
                           </p>
                         </div>
                         <Button
@@ -332,7 +326,7 @@ export default function ChatPanel({ initialMessages, currentUserId, groupId, gro
                       )}
                       
                       <div className="min-w-0 break-words">
-                        <MessageContent content={msg.content} isNATE={isNATE(msg.user_id)} isCurrentUser={true} isThinking={msg.is_thinking} />
+                        <MessageContent content={msg.content} isNATE={isNATE(msg.user_id)} isCurrentUser={true} />
                       </div>
                       
                       <div className="flex items-center justify-between mt-1">

@@ -14,8 +14,7 @@ export interface Message {
   name: string
   avatar_url: string
   reply_to?: number | null  
-  is_reply?: boolean
-  is_thinking?: boolean     
+  is_reply?: boolean     
   original_message?: {      
     id: number
     content: string
@@ -46,7 +45,6 @@ export async function getMessages(groupId: number): Promise<Message[]> {
       m.user_id, 
       m.reply_to,
       m.is_reply,
-      m.is_thinking,
       u.name, 
       u.avatar_url,
       CASE 
@@ -71,7 +69,6 @@ export async function getMessages(groupId: number): Promise<Message[]> {
     ...msg,
     user_id: Number(msg.user_id),
     reply_to: msg.reply_to ? Number(msg.reply_to) : null,
-    is_thinking: msg.is_thinking || false,
     original_message: msg.original_message ? {
       ...msg.original_message,
       id: Number(msg.original_message.id)
@@ -184,14 +181,11 @@ export async function sendMessage(prevState: any, formData: FormData) {
 
     // Check if the message mentions NATE
     if (mentionsNATE(message)) {
-      // First, insert a "thinking" message from NATE
+      // First, insert "I am thinking..." message
       await sql`
-        INSERT INTO messages (group_id, user_id, content, is_thinking)
-        VALUES (${groupId}, ${NATE_USER_ID}, 'I am thinking...', true);
+        INSERT INTO messages (group_id, user_id, content)
+        VALUES (${groupId}, ${NATE_USER_ID}, 'I am thinking...');
       `
-      
-      // Revalidate to show the thinking message immediately
-      revalidatePath("/")
       
       // Get recent chat history for context
       const recentMessages = await getRecentChatHistory(groupId, 10)
@@ -199,13 +193,10 @@ export async function sendMessage(prevState: any, formData: FormData) {
       // Get NATE's response
       const nateResponse = await getNATEResponse(recentMessages, message)
       
-      // Update the thinking message with the actual response
+      // Insert NATE's actual response
       await sql`
-        UPDATE messages 
-        SET content = ${nateResponse}, is_thinking = false
-        WHERE group_id = ${groupId} AND user_id = ${NATE_USER_ID} AND is_thinking = true
-        ORDER BY created_at DESC
-        LIMIT 1;
+        INSERT INTO messages (group_id, user_id, content)
+        VALUES (${groupId}, ${NATE_USER_ID}, ${nateResponse});
       `
     }
 
