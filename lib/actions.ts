@@ -424,3 +424,100 @@ export async function submitFinalDocument(groupId: number) {
     return { error: "Failed to submit document, please try again." }
   }
 }
+
+// --- Intervention Message Actions ---
+
+// Get groups that need intervention messages
+export async function getGroupsNeedingIntervention(): Promise<Array<{id: number, name: string, plan_time: string | null, monitor_time: string | null, evaluate_time: string | null}>> {
+  const groups = await sql<Array<{id: number, name: string, plan_time: string | null, monitor_time: string | null, evaluate_time: string | null}>>`
+    SELECT id, name, plan_time, monitor_time, evaluate_time
+    FROM groups 
+    WHERE intervene = true 
+    AND (
+      (plan_time IS NOT NULL AND plan_time <= NOW()) OR
+      (monitor_time IS NOT NULL AND monitor_time <= NOW()) OR
+      (evaluate_time IS NOT NULL AND evaluate_time <= NOW())
+    )
+  `
+  return groups
+}
+
+// Send intervention message for a specific group and phase
+export async function sendInterventionMessage(groupId: number, phase: 'plan' | 'monitor' | 'evaluate'): Promise<void> {
+  const messages = {
+    plan: "📋 **Planning Phase**: It's time to plan your debate strategy! Consider your main arguments, evidence, and counter-arguments. What's your approach going to be?",
+    monitor: "👀 **Monitoring Phase**: How is your preparation going? Are you staying on track with your plan? Do you need to adjust your strategy?",
+    evaluate: "📊 **Evaluation Phase**: Time to evaluate your progress! What have you learned? What worked well? What could be improved for next time?"
+  }
+
+  const message = messages[phase]
+  
+  // Insert the intervention message
+  await sql`
+    INSERT INTO messages (group_id, user_id, content)
+    VALUES (${groupId}, ${NATE_USER_ID}, ${message});
+  `
+
+  // Mark the intervention as sent by setting the time to NULL
+  const timeColumn = `${phase}_time`
+  await sql.unsafe(`
+    UPDATE groups 
+    SET ${timeColumn} = NULL 
+    WHERE id = ${groupId}
+  `)
+
+  revalidatePath("/")
+}
+
+// Check and send intervention messages for all groups
+export async function checkAndSendInterventionMessages(): Promise<void> {
+  try {
+    const groups = await getGroupsNeedingIntervention()
+    
+    for (const group of groups) {
+      // Check plan intervention
+      if (group.plan_time && new Date(group.plan_time) <= new Date()) {
+        await sendInterventionMessage(group.id, 'plan')
+      }
+      
+      // Check monitor intervention
+      if (group.monitor_time && new Date(group.monitor_time) <= new Date()) {
+        await sendInterventionMessage(group.id, 'monitor')
+      }
+      
+      // Check evaluate intervention
+      if (group.evaluate_time && new Date(group.evaluate_time) <= new Date()) {
+        await sendInterventionMessage(group.id, 'evaluate')
+      }
+    }
+  } catch (error) {
+    console.error('Error checking intervention messages:', error)
+  }
+}
+
+// Update group intervention settings
+export async function updateGroupIntervention(
+  groupId: number, 
+  intervene: boolean, 
+  planTime?: string, 
+  monitorTime?: string, 
+  evaluateTime?: string
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await sql`
+      UPDATE groups 
+      SET 
+        intervene = ${intervene},
+        plan_time = ${planTime || null},
+        monitor_time = ${monitorTime || null},
+        evaluate_time = ${evaluateTime || null}
+      WHERE id = ${groupId}
+    `
+    
+    revalidatePath("/")
+    return { success: true }
+  } catch (error) {
+    console.error('Error updating group intervention:', error)
+    return { success: false, error: "Failed to update intervention settings" }
+  }
+}

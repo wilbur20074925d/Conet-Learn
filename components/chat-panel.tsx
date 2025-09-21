@@ -6,7 +6,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { sendMessage, getMessages, type Message } from "@/lib/actions"
+import { sendMessage, getMessages, checkAndSendInterventionMessages, type Message } from "@/lib/actions"
 import { SendHorizonal, User, Bot, Reply, X, MessageCircle, Sparkles, Users, Brain } from "lucide-react"
 import { EmojiPicker } from "@/components/ui/emoji-picker"
 
@@ -94,6 +94,10 @@ export default function ChatPanel({ initialMessages, currentUserId, groupId, gro
   // 轮询获取最新消息
   const pollMessages = async () => {
     try {
+      // 首先检查并发送干预消息
+      await checkAndSendInterventionMessages()
+      
+      // 然后获取最新消息
       const latestMessages = await getMessages(groupId)
       setMessages(latestMessages)
     } catch (error) {
