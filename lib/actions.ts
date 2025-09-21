@@ -105,6 +105,39 @@ async function getRecentChatHistory(groupId: number, limit: number = 10): Promis
   }))
 }
 
+// Process NATE's response asynchronously
+async function processNATEResponse(groupId: number, userMessage: string) {
+  try {
+    // Add a small delay to make the thinking more visible
+    await new Promise(resolve => setTimeout(resolve, 1000))
+    
+    // Get recent chat history for context
+    const recentMessages = await getRecentChatHistory(groupId, 10)
+    
+    // Get NATE's response
+    const nateResponse = await getNATEResponse(recentMessages, userMessage)
+    
+    // Insert NATE's actual response
+    await sql`
+      INSERT INTO messages (group_id, user_id, content)
+      VALUES (${groupId}, ${NATE_USER_ID}, ${nateResponse});
+    `
+    
+    // Trigger revalidation to show the response
+    revalidatePath("/")
+  } catch (error) {
+    console.error('Error processing NATE response:', error)
+    
+    // Insert error message
+    await sql`
+      INSERT INTO messages (group_id, user_id, content)
+      VALUES (${groupId}, ${NATE_USER_ID}, 'Sorry, I encountered an error while processing your request.');
+    `
+    
+    revalidatePath("/")
+  }
+}
+
 // Call OpenRouter API to get NATE's response
 async function getNATEResponse(messages: Message[], userMessage: string): Promise<string> {
   if (!OPENROUTER_API_KEY) {
@@ -181,26 +214,22 @@ export async function sendMessage(prevState: any, formData: FormData) {
 
     // Check if the message mentions NATE
     if (mentionsNATE(message)) {
-      // First, insert "I am thinking..." message
+      // First, insert "I am thinking..." message immediately
       await sql`
         INSERT INTO messages (group_id, user_id, content)
         VALUES (${groupId}, ${NATE_USER_ID}, 'I am thinking...');
       `
       
-      // Get recent chat history for context
-      const recentMessages = await getRecentChatHistory(groupId, 10)
+      // Trigger revalidation to show the thinking message
+      revalidatePath("/")
       
-      // Get NATE's response
-      const nateResponse = await getNATEResponse(recentMessages, message)
-      
-      // Insert NATE's actual response
-      await sql`
-        INSERT INTO messages (group_id, user_id, content)
-        VALUES (${groupId}, ${NATE_USER_ID}, ${nateResponse});
-      `
+      // Process NATE's response asynchronously
+      processNATEResponse(groupId, message)
+    } else {
+      // Only revalidate if not processing NATE response
+      revalidatePath("/")
     }
 
-    revalidatePath("/")
     return { success: true }
   } catch (error) {
     console.error(error)
