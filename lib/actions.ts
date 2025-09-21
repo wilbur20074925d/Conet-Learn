@@ -105,39 +105,6 @@ async function getRecentChatHistory(groupId: number, limit: number = 10): Promis
   }))
 }
 
-// Process NATE's response asynchronously
-async function processNATEResponse(groupId: number, userMessage: string) {
-  try {
-    // Add a small delay to make the thinking more visible
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    
-    // Get recent chat history for context
-    const recentMessages = await getRecentChatHistory(groupId, 10)
-    
-    // Get NATE's response
-    const nateResponse = await getNATEResponse(recentMessages, userMessage)
-    
-    // Insert NATE's actual response
-    await sql`
-      INSERT INTO messages (group_id, user_id, content)
-      VALUES (${groupId}, ${NATE_USER_ID}, ${nateResponse});
-    `
-    
-    // Trigger revalidation to show the response
-    revalidatePath("/")
-  } catch (error) {
-    console.error('Error processing NATE response:', error)
-    
-    // Insert error message
-    await sql`
-      INSERT INTO messages (group_id, user_id, content)
-      VALUES (${groupId}, ${NATE_USER_ID}, 'Sorry, I encountered an error while processing your request.');
-    `
-    
-    revalidatePath("/")
-  }
-}
-
 // Call OpenRouter API to get NATE's response
 async function getNATEResponse(messages: Message[], userMessage: string): Promise<string> {
   if (!OPENROUTER_API_KEY) {
@@ -214,22 +181,37 @@ export async function sendMessage(prevState: any, formData: FormData) {
 
     // Check if the message mentions NATE
     if (mentionsNATE(message)) {
-      // First, insert "I am thinking..." message immediately
-      await sql`
+      // 插入 NATE 的 "I am thinking..."
+      const thinkingMsg = await sql<{ id: number }[]>`
         INSERT INTO messages (group_id, user_id, content)
-        VALUES (${groupId}, ${NATE_USER_ID}, 'I am thinking...');
+        VALUES (${groupId}, ${NATE_USER_ID}, 'I am thinking...')
+        RETURNING id;
       `
-      
-      // Trigger revalidation to show the thinking message
-      revalidatePath("/")
-      
-      // Process NATE's response asynchronously
-      processNATEResponse(groupId, message)
-    } else {
-      // Only revalidate if not processing NATE response
-      revalidatePath("/")
+
+      // 注意：不要在这里直接生成 Nate 的回复
+      // 而是交给后台异步任务去处理
+      process.nextTick(async () => {
+        try {
+          // 获取上下文
+          const recentMessages = await getRecentChatHistory(groupId, 10)
+
+          // 生成 Nate 的回复
+          const nateResponse = await getNATEResponse(recentMessages, message)
+
+          // 插入最终回复（新消息）
+          await sql`
+            INSERT INTO messages (group_id, user_id, content)
+            VALUES (${groupId}, ${NATE_USER_ID}, ${nateResponse});
+          `
+
+          revalidatePath("/")
+        } catch (err) {
+          console.error("Error generating Nate response:", err)
+        }
+      })
     }
 
+    revalidatePath("/")
     return { success: true }
   } catch (error) {
     console.error(error)
