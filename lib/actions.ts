@@ -445,9 +445,9 @@ export async function getGroupsNeedingIntervention(): Promise<Array<{id: number,
 // Send intervention message for a specific group and phase
 export async function sendInterventionMessage(groupId: number, phase: 'plan' | 'monitor' | 'evaluate'): Promise<void> {
   const messages = {
-    plan: "📋 **Planning Phase**: It's time to plan your debate strategy! Consider your main arguments, evidence, and counter-arguments. What's your approach going to be?",
-    monitor: "👀 **Monitoring Phase**: How is your preparation going? Are you staying on track with your plan? Do you need to adjust your strategy?",
-    evaluate: "📊 **Evaluation Phase**: Time to evaluate your progress! What have you learned? What worked well? What could be improved for next time?"
+    plan: "📊 It's time to plan your debate strategy! Consider your main arguments, evidence, and counter-arguments. What's your approach going to be?",
+    monitor: " 📊 How is your preparation going? Are you staying on track with your plan? Do you need to adjust your strategy?",
+    evaluate: "📊  Time to evaluate your progress! What have you learned? What worked well? What could be improved for next time?"
   }
 
   const message = messages[phase]
