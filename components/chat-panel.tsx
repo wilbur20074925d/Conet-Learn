@@ -135,6 +135,11 @@ export default function ChatPanel({ initialMessages, currentUserId, groupId, gro
     }
   }, [state, groupId])
 
+  // 设置定时轮询 - 这是关键修复
+  useEffect(() => {
+    const interval = setInterval(pollMessages, 2000) // 每2秒轮询一次
+    return () => clearInterval(interval)
+  }, [groupId])
 
   // 监听消息变化，自动滚动到底部
   useEffect(() => {
