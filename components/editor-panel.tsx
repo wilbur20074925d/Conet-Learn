@@ -76,7 +76,6 @@ export default function EditorPanel({
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitStatus, setSubmitStatus] = useState<"idle" | "success" | "error">("idle")
-  const [totalWordCount, setTotalWordCount] = useState(0)
 
   // Structured content state
   const [structuredContent, setStructuredContent] = useState<StructuredContent>({
@@ -97,14 +96,6 @@ export default function EditorPanel({
   })
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // 计算总字数
-  const calculateWordCount = (content: StructuredContent): number => {
-    const allText = Object.values(content).join(' ')
-    // 移除多余空格并分割成单词
-    const words = allText.trim().split(/\s+/).filter(word => word.length > 0)
-    return words.length
-  }
 
   // 计算单个字段字数
   const calculateFieldWordCount = (text: string): number => {
@@ -135,11 +126,6 @@ export default function EditorPanel({
     }
   }, [initialContent])
 
-  // 更新字数统计
-  useEffect(() => {
-    const wordCount = calculateWordCount(structuredContent)
-    setTotalWordCount(wordCount)
-  }, [structuredContent])
 
   const debouncedSnapshotSave = (nextContentObj: Record<string, string>) => {
     if (timerRef.current) clearTimeout(timerRef.current)
@@ -206,9 +192,9 @@ export default function EditorPanel({
                     <label className="block text-sm font-medium text-gray-700">
                     Please collaborate with your partner to write a 300-word article summarizing all claims with your group, along with a clear reasoning process. No evidence is needed.
                     </label>
-                    <div className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                    <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
                       {calculateFieldWordCount(structuredContent.part1_concept1)} words
-                    </div>
+                    </span>
                   </div>
                   <Textarea
                     value={structuredContent.part1_concept1}
@@ -238,9 +224,9 @@ export default function EditorPanel({
                   <label className="block text-sm font-medium text-gray-700">
                     Please collaborate with your partner to write a 300-word article summarizing all claims with your group, along with a clear reasoning process. No evidence is needed.
                   </label>
-                  <div className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                  <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
                     {calculateFieldWordCount(structuredContent.part1_concept2)} words
-                  </div>
+                  </span>
                 </div>
                 <Textarea
                   value={structuredContent.part1_concept2}
@@ -280,15 +266,7 @@ export default function EditorPanel({
           </div>
           
           {/* 右侧状态指示器和操作按钮 */}
-          <div className="flex items-center gap-4">
-            {/* 字数统计 */}
-            <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 rounded-full border border-blue-200">
-              <div className="h-2 w-2 bg-blue-400 rounded-full"></div>
-              <span className="text-sm text-blue-700 font-medium">
-                {totalWordCount} words
-              </span>
-            </div>
-            
+          <div className="flex items-center gap-2">
             <SaveStatusIndicator status={saveStatus} />
             
             {/* 提交按钮 */}
