@@ -76,6 +76,7 @@ export default function EditorPanel({
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitStatus, setSubmitStatus] = useState<"idle" | "success" | "error">("idle")
+  const [totalWordCount, setTotalWordCount] = useState(0)
 
   // Structured content state
   const [structuredContent, setStructuredContent] = useState<StructuredContent>({
@@ -96,6 +97,20 @@ export default function EditorPanel({
   })
 
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // 计算总字数
+  const calculateWordCount = (content: StructuredContent): number => {
+    const allText = Object.values(content).join(' ')
+    // 移除多余空格并分割成单词
+    const words = allText.trim().split(/\s+/).filter(word => word.length > 0)
+    return words.length
+  }
+
+  // 计算单个字段字数
+  const calculateFieldWordCount = (text: string): number => {
+    const words = text.trim().split(/\s+/).filter(word => word.length > 0)
+    return words.length
+  }
 
   // Initialize structured fields from initialContent (JSON or plain text)
   useEffect(() => {
@@ -119,6 +134,12 @@ export default function EditorPanel({
       }
     }
   }, [initialContent])
+
+  // 更新字数统计
+  useEffect(() => {
+    const wordCount = calculateWordCount(structuredContent)
+    setTotalWordCount(wordCount)
+  }, [structuredContent])
 
   const debouncedSnapshotSave = (nextContentObj: Record<string, string>) => {
     if (timerRef.current) clearTimeout(timerRef.current)
@@ -176,15 +197,18 @@ export default function EditorPanel({
                 <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-md">
                   <FileText className="h-4 w-4 text-white" />
                 </div>
-                Social media is good for building relationships
+                Why user should hold accountability for social media addiction?
               </CardTitle>
             </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Write an argument for this motion.
+                  <div className="flex items-center justify-between">
+                    <label className="block text-sm font-medium text-gray-700">
+                    Please collaborate with your partner to write a 300-word article summarizing all claims with your group, along with a clear reasoning process. No evidence is needed.
                     </label>
+                    <div className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                      {calculateFieldWordCount(structuredContent.part1_concept1)} words
+                    </div>
                   </div>
                   <Textarea
                     value={structuredContent.part1_concept1}
@@ -205,14 +229,19 @@ export default function EditorPanel({
                 <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center shadow-md">
                   <Sparkles className="h-4 w-4 text-white" />
                 </div>
-                Social media is bad for building relationships
+                Why social media platform should hold accountability for social media addiction?
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
             <div className="space-y-2">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Write an argument against this motion.
-                </label>
+                <div className="flex items-center justify-between">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Please collaborate with your partner to write a 300-word article summarizing all claims with your group, along with a clear reasoning process. No evidence is needed.
+                  </label>
+                  <div className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full">
+                    {calculateFieldWordCount(structuredContent.part1_concept2)} words
+                  </div>
+                </div>
                 <Textarea
                   value={structuredContent.part1_concept2}
                   onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => 
@@ -245,13 +274,21 @@ export default function EditorPanel({
               <h2 className="text-lg font-semibold text-gray-900">Personal Writing</h2>
               <div className="flex items-center gap-2 text-sm text-gray-500">
                 <Sparkles className="h-3 w-3" />
-                <span>Your Personal Essay - Social Media Addiction Debate</span>
+                <span>Please edit and modify here. After finishing, please click submit.</span>
               </div>
             </div>
           </div>
           
           {/* 右侧状态指示器和操作按钮 */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
+            {/* 字数统计 */}
+            <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 rounded-full border border-blue-200">
+              <div className="h-2 w-2 bg-blue-400 rounded-full"></div>
+              <span className="text-sm text-blue-700 font-medium">
+                {totalWordCount} words
+              </span>
+            </div>
+            
             <SaveStatusIndicator status={saveStatus} />
             
             {/* 提交按钮 */}
