@@ -1,6 +1,5 @@
 "use server"
 
-import { sql } from "@/lib/db"
 import { updateGroupIntervention } from "@/lib/actions"
 import { redirect } from "next/navigation"
 
@@ -14,7 +13,10 @@ interface Group {
 }
 
 async function getGroups(): Promise<Group[]> {
-  const groups = await sql`
+  // Import sql here to avoid server component issues
+  const { default: sql } = await import("@/lib/db")
+  
+  const groups = await sql<Group[]>`
     SELECT id, name, intervene, plan_time, monitor_time, evaluate_time
     FROM groups
     ORDER BY id
