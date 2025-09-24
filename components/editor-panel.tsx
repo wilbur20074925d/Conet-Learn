@@ -264,7 +264,7 @@ export default function EditorPanel({
               <FileText className="h-5 w-5 text-white" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold text-gray-900">Personal Writing</h2>
+              <h2 className="text-lg font-semibold text-gray-900">Editing Zone</h2>
               <div className="flex items-center gap-2 text-sm text-gray-500">
                 <Sparkles className="h-3 w-3" />
                 <span>Please edit and modify here. After finishing, please click submit.</span>
