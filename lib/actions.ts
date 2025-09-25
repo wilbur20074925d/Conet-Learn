@@ -28,6 +28,7 @@ export interface DocumentHistory {
   name: string
   avatar_url: string
   created_at: string
+  is_submit: boolean
 }
 
 // --- Chatbot Configuration ---
@@ -244,7 +245,7 @@ export async function getDocumentHistory(groupId: number, userId?: number): Prom
     if (!doc.length) return []
 
     const history = await sql<DocumentHistory[]>`
-      SELECT h.id, h.user_id, h.created_at, u.name, u.avatar_url
+      SELECT h.id, h.user_id, h.created_at, h.is_submit, u.name, u.avatar_url
       FROM document_history h
       JOIN users u ON h.user_id = u.id
       WHERE h.document_id = ${doc[0].id}
@@ -261,7 +262,7 @@ export async function getDocumentHistory(groupId: number, userId?: number): Prom
     if (!doc.length) return []
 
     const history = await sql<DocumentHistory[]>`
-      SELECT h.id, h.user_id, h.created_at, u.name, u.avatar_url
+      SELECT h.id, h.user_id, h.created_at, h.is_submit, u.name, u.avatar_url
       FROM document_history h
       JOIN users u ON h.user_id = u.id
       WHERE h.document_id = ${doc[0].id}
@@ -409,8 +410,8 @@ export async function submitFinalDocument(groupId: number) {
 
       // 添加最终提交历史
       await sql`
-        INSERT INTO document_history (document_id, user_id, content)
-        VALUES (${documentId}, ${userId}, ${contentToSubmit})
+        INSERT INTO document_history (document_id, user_id, content, is_submit)
+        VALUES (${documentId}, ${userId}, ${contentToSubmit}, true)
       `
     } catch (error) {
       console.error('Submit database error:', error)
@@ -445,9 +446,9 @@ export async function getGroupsNeedingIntervention(): Promise<Array<{id: number,
 // Send intervention message for a specific group and phase
 export async function sendInterventionMessage(groupId: number, phase: 'plan' | 'monitor' | 'evaluate'): Promise<void> {
   const messages = {
-    plan: "📊 It's time to plan our strategy! What goal will we set for this task, and how will we plan to reach it?",
-    monitor: " 📊 How is our work going? Are we staying on track with our plan? ",
-    evaluate: "📊  How do you all feel about our solution and collaboration? ",
+    plan: " It's time to plan our strategy! What goal will we set for this task, and how will we plan to reach it?",
+    monitor: " How is our work going? Are we staying on track with our plan? ",
+    evaluate: " How do you all feel about our solution and collaboration? ",
   }
 
   const message = messages[phase]
