@@ -81,6 +81,17 @@ export default async function Home() {
             
             {/* 右侧操作按钮 */}
             <div className="flex items-center gap-3">
+              {/* Post Test Button */}
+              <a
+                href="https://docs.google.com/forms/d/e/1FAIpQLSdwmICqK3Q5I57opd5i0wQICtG_o6NKZV6ad2er-wPOCrXs-w/viewform"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 h-9 px-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 hover:bg-green-100 hover:border-green-300 text-green-700 font-medium transition-all duration-200 shadow-sm hover:shadow-md rounded-md text-sm"
+              >
+                <CheckCircle className="h-4 w-4" />
+                Learing Experiece Survey
+              </a>
+              
               <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 rounded-full border border-blue-200">
                 <Users className="h-4 w-4 text-blue-600" />
                 <span className="text-sm text-blue-700 font-medium">{groupName}</span>
