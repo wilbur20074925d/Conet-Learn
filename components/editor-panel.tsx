@@ -197,7 +197,7 @@ export default function EditorPanel({
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <label className="block text-sm font-medium text-gray-700">
-                    Please collaborate with your partner to write a 300-word article summarizing all claims with your group, along with a clear reasoning process. No evidence is needed.
+                     Write some bullet points to map out the core arguments.
                     </label>
                     <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
                       {calculateFieldWordCount(structuredContent.part1_concept1)} words
@@ -229,7 +229,7 @@ export default function EditorPanel({
             <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="block text-sm font-medium text-gray-700">
-                    Please collaborate with your partner to write a 300-word article summarizing all claims with your group, along with a clear reasoning process. No evidence is needed.
+                    Write some bullet points to map out the core arguments.
                   </label>
                   <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
                     {calculateFieldWordCount(structuredContent.part1_concept2)} words
