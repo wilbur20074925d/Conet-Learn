@@ -63,7 +63,7 @@ export default function LoginPage() {
               <GraduationCap className="w-8 h-8 text-white" />
             </div>
             <CardTitle className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
-              CCST9076 Activity
+              CoNetLearn
             </CardTitle>
             <CardDescription className="text-gray-600 text-lg mt-2">
               Welcome to your learning space
