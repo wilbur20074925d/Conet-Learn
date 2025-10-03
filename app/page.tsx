@@ -69,7 +69,7 @@ export default async function Home() {
                 <GraduationCap className="h-6 w-6 text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-semibold text-gray-900">CCST9076 Course Activity</h1>
+                <h1 className="text-xl font-semibold text-gray-900"> CoNetLearn</h1>
                 <div className="flex items-center gap-2 text-sm text-gray-500">
                   <BookOpen className="h-3 w-3" />
                   <span>Collaborative Learning Platform</span>
