@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation"
 import ChatPanel from "@/components/chat-panel"
 import EditorPanel from "@/components/editor-panel"
+import ConsentWrapper from "@/components/consent-wrapper"
 import { getMessages, getDocument, submitFinalDocument } from "@/lib/actions"
 import { getUserIdFromCookie } from "@/lib/session"
 import sql from "@/lib/db"
@@ -57,6 +58,9 @@ export default async function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* 数据收集同意弹窗 */}
+      <ConsentWrapper userId={currentUserId} />
+      
       {/* 美化的Header - 与chat-panel和editor-panel保持一致 */}
       <header className="border-b bg-white shadow-sm flex-shrink-0 relative overflow-hidden">
         {/* 背景装饰 */}
