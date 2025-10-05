@@ -66,7 +66,7 @@ export default function LoginPage() {
                CoNetLearn
             </CardTitle>
             <CardDescription className="text-gray-600 text-lg mt-2">
-              Welcome to your learning space
+              Welcome to your learning space!
             </CardDescription>
           </CardHeader>
           
