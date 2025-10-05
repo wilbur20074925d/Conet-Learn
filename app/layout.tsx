@@ -5,7 +5,7 @@ import { Analytics } from '@vercel/analytics/next'
 import './globals.css'
 
 export const metadata: Metadata = {
-  title: 'ccst9076',
+  title: 'conetlearn',
 }
 
 export default function RootLayout({

@@ -1,12 +1,11 @@
 {
-  "name": "ccst9076",
+  "name": "conetlearn-yingna",
   "private": true,
   "scripts": {
     "build": "next build",
     "dev": "next dev",
     "lint": "next lint",
-    "start": "next start",
-    "setup-db": "node scripts/setup-database.js"
+    "start": "next start"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.1",

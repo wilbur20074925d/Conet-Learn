@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation"
 import ChatPanel from "@/components/chat-panel"
 import EditorPanel from "@/components/editor-panel"
-import ConsentWrapper from "@/components/consent-wrapper"
 import { getMessages, getDocument, submitFinalDocument } from "@/lib/actions"
 import { getUserIdFromCookie } from "@/lib/session"
 import sql from "@/lib/db"
@@ -58,9 +57,6 @@ export default async function Home() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* 数据收集同意弹窗 */}
-      <ConsentWrapper userId={currentUserId} />
-      
       {/* 美化的Header - 与chat-panel和editor-panel保持一致 */}
       <header className="border-b bg-white shadow-sm flex-shrink-0 relative overflow-hidden">
         {/* 背景装饰 */}
@@ -73,7 +69,7 @@ export default async function Home() {
                 <GraduationCap className="h-6 w-6 text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-semibold text-gray-900"> CoNetLearn</h1>
+                <h1 className="text-xl font-semibold text-gray-900">CoNetLearn</h1>
                 <div className="flex items-center gap-2 text-sm text-gray-500">
                   <BookOpen className="h-3 w-3" />
                   <span>Collaborative Learning Platform</span>
@@ -85,6 +81,17 @@ export default async function Home() {
             
             {/* 右侧操作按钮 */}
             <div className="flex items-center gap-3">
+              {/* Post Test Button */}
+              <a
+                href="https://docs.google.com/forms/d/e/1FAIpQLSdCNiCNTjfqK-9JQUDM_j79kFvn9ERXox31-FYL9-SAlxZ8fQ/viewform?usp=dialog"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-2 h-9 px-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 hover:bg-green-100 hover:border-green-300 text-green-700 font-medium transition-all duration-200 shadow-sm hover:shadow-md rounded-md text-sm"
+              >
+                <CheckCircle className="h-4 w-4" />
+                Learing Experiece Survey
+              </a>
+              
               <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 rounded-full border border-blue-200">
                 <Users className="h-4 w-4 text-blue-600" />
                 <span className="text-sm text-blue-700 font-medium">{groupName}</span>
