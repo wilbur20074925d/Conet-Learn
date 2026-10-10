@@ -34,6 +34,8 @@ function useChart() {
   return context
 }
 
+// Use Recharts unconditionally; global guard in layout prevents ReferenceError on old browsers
+
 const ChartContainer = React.forwardRef<
   HTMLDivElement,
   React.ComponentProps<"div"> & {

@@ -1,318 +1,213 @@
 "use client"
 
-import * as React from "react"
-import { useState, useEffect, useRef } from "react"
-import { Textarea } from "@/components/ui/textarea"
+import { useEffect, useRef, useState } from "react"
 import { Button } from "@/components/ui/button"
-import { saveDocumentSnapshot, submitFinalDocument, type DocumentHistory } from "@/lib/actions"
-import { ScrollArea } from "@/components/ui/scroll-area"
-import { FileText, Sparkles } from "lucide-react"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
+import InspiredByButton from "@/components/inspired-by-button"
+import { saveDocumentSnapshot, submitFinalDocument } from "@/lib/actions"
 
 type SaveStatus = "idle" | "saving" | "saved" | "error"
 
-function SaveStatusIndicator({ status, hasUnsavedChanges }: { status: SaveStatus; hasUnsavedChanges: boolean }): React.JSX.Element {
-  // 只在错误状态时显示文字，其他状态只显示指示器
-  let text = ""
-  let colorClass = "text-gray-500"
-  if (status === "error") {
-    text = "Save failed"
-    colorClass = "text-red-600"
-  }
-
-  return (
-    <div className="flex items-center gap-2">
-      <div className={`h-2 w-2 rounded-full ${
-        status === "saved" && !hasUnsavedChanges ? "bg-green-400" : 
-        status === "error" ? "bg-red-400" : 
-        hasUnsavedChanges ? "bg-yellow-400" : "bg-gray-400"
-      }`} />
-      {text && <span className={`text-sm font-medium ${colorClass}`}>{text}</span>}
-    </div>
-  )
-}
-
-interface EditorPanelProps {
-  initialContent: string
-  groupId: number
-  currentUser?: {
-    id: number
-    name: string
-    avatar_url?: string
-  }
+interface GroupMember {
+  id: string
+  name: string
+  avatar_url?: string | null
 }
 
 interface StructuredContent {
   part1_concept1: string
   part1_concept2: string
-  proposition_arg1_claim: string
-  proposition_arg1_evidence: string
-  proposition_arg1_reasoning: string
-  proposition_arg2_claim: string
-  proposition_arg2_evidence: string
-  proposition_arg2_reasoning: string
-  opposition_arg1_claim: string
-  opposition_arg1_evidence: string
-  opposition_arg1_reasoning: string
-  opposition_arg2_claim: string
-  opposition_arg2_evidence: string
-  opposition_arg2_reasoning: string
+}
+
+function wordCount(text: string) {
+  return text.trim().split(/\s+/).filter(Boolean).length
 }
 
 export default function EditorPanel({
   initialContent,
   groupId,
-  currentUser
-}: EditorPanelProps): React.JSX.Element {
-  const [content, setContent] = useState(initialContent)
-  const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
-  const [isSubmitting, setIsSubmitting] = useState(false)
-  const [submitStatus, setSubmitStatus] = useState<"idle" | "success" | "error">("idle")
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
-
-  // Structured content state
+  groupMembers,
+}: {
+  initialContent: string
+  groupId: string
+  groupMembers: GroupMember[]
+}) {
   const [structuredContent, setStructuredContent] = useState<StructuredContent>({
     part1_concept1: "",
     part1_concept2: "",
-    proposition_arg1_claim: "",
-    proposition_arg1_evidence: "",
-    proposition_arg1_reasoning: "",
-    proposition_arg2_claim: "",
-    proposition_arg2_evidence: "",
-    proposition_arg2_reasoning: "",
-    opposition_arg1_claim: "",
-    opposition_arg1_evidence: "",
-    opposition_arg1_reasoning: "",
-    opposition_arg2_claim: "",
-    opposition_arg2_evidence: "",
-    opposition_arg2_reasoning: "",
   })
-
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submitStatus, setSubmitStatus] = useState<"idle" | "success" | "error">("idle")
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hydrated = useRef(false)
 
-  // 计算单个字段字数
-  const calculateFieldWordCount = (text: string): number => {
-    const words = text.trim().split(/\s+/).filter(word => word.length > 0)
-    return words.length
-  }
-
-  // Initialize structured fields from initialContent (JSON or plain text)
   useEffect(() => {
+    if (hydrated.current) return
+    hydrated.current = true
+    if (!initialContent) return
     try {
-      const parsed = initialContent ? JSON.parse(initialContent) : null
-      if (parsed && typeof parsed === 'object') {
-        setStructuredContent((prev: StructuredContent) => ({
-          ...prev,
-          // keep legacy keys if present
-          // fallback: map known fields
-          ...(parsed.field1 ? { part1_concept1: parsed.field1 } : {}),
-          ...(parsed.field2 ? { part1_concept2: parsed.field2 } : {}
-          )
-        }))
-      } else if (initialContent) {
-        setStructuredContent((prev: StructuredContent) => ({ ...prev, part1_concept1: initialContent }))
+      const parsed = JSON.parse(initialContent) as Record<string, string>
+      if (parsed && typeof parsed === "object") {
+        setStructuredContent({
+          part1_concept1: parsed.part1_concept1 || parsed.field1 || "",
+          part1_concept2: parsed.part1_concept2 || parsed.field2 || "",
+        })
+        return
       }
     } catch {
-      if (initialContent) {
-        setStructuredContent((prev: StructuredContent) => ({ ...prev, part1_concept1: initialContent }))
-      }
+      setStructuredContent({ part1_concept1: initialContent, part1_concept2: "" })
     }
   }, [initialContent])
 
-
-  const debouncedSnapshotSave = (nextContentObj: Record<string, string>) => {
+  function debouncedSnapshotSave(next: StructuredContent) {
     setHasUnsavedChanges(true)
-    
+    setSaveStatus("saving")
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(async () => {
-      // 静默保存，不显示saving状态
       const payload = JSON.stringify({
-        field1: nextContentObj.part1_concept1 || "",
-        field2: nextContentObj.part1_concept2 || "",
+        field1: next.part1_concept1 || "",
+        field2: next.part1_concept2 || "",
+        part1_concept1: next.part1_concept1 || "",
+        part1_concept2: next.part1_concept2 || "",
       })
       const result = await saveDocumentSnapshot(payload, groupId)
-      
       if (result?.success) {
         setSaveStatus("saved")
         setHasUnsavedChanges(false)
       } else {
         setSaveStatus("error")
-        // 5秒后自动重置为saved状态
-        setTimeout(() => {
-          setSaveStatus("saved")
-          setHasUnsavedChanges(false)
-        }, 5000)
       }
-    }, 2000) // 增加延迟时间到2秒，减少保存频率
+    }, 2000)
   }
 
-  const handleSubmitFinal = async () => {
-    setIsSubmitting(true)
-    setSubmitStatus("idle")
-    
-    try {
-      const result = await submitFinalDocument(groupId)
-      if (result.error) {
-        setSubmitStatus("error")
-        console.error("Submit failed:", result.error)
-      } else {
-        setSubmitStatus("success")
-        // 可以添加成功提示
-        setTimeout(() => setSubmitStatus("idle"), 3000)
-      }
-    } catch (error) {
-      setSubmitStatus("error")
-      console.error("Submit failed:", error)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  const handleStructuredContentChange = (field: keyof StructuredContent, value: string) => {
-    setStructuredContent((prev: StructuredContent) => {
+  function updateField(field: keyof StructuredContent, value: string) {
+    setStructuredContent((prev) => {
       const next = { ...prev, [field]: value }
-      const updatedContent = JSON.stringify(next, null, 2)
-      setContent(updatedContent)
       debouncedSnapshotSave(next)
       return next
     })
   }
 
-  const editorComponent = (
-    <div className="flex-1 overflow-hidden">
-      <ScrollArea className="h-full">
-        <div className="p-4 space-y-6">
-          {/* Part I: Clarify key concepts */}
-          <Card className="shadow-sm hover:shadow-md transition-shadow duration-200 border-0 bg-gradient-to-br from-blue-50/50 to-indigo-50/30">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-md">
-                  <FileText className="h-4 w-4 text-white" />
-                </div>
-                Why user should hold accountability for social media addiction?
-              </CardTitle>
-            </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between">
-                    <label className="block text-sm font-medium text-gray-700">
-                     Write some bullet points to map out the core arguments.
-                    </label>
-                    <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                      {calculateFieldWordCount(structuredContent.part1_concept1)} words
-                    </span>
-                  </div>
-                  <Textarea
-                    value={structuredContent.part1_concept1}
-                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => 
-                      handleStructuredContentChange("part1_concept1", e.target.value)
-                    }
-                    placeholder="Edit your essay here..."
-                    className="w-full h-32 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                  />
-              </div>
-            </CardContent>
-          </Card>
+  function addInspiration(field: keyof StructuredContent, name: string) {
+    const note = `(inspired by ${name})`
+    const current = structuredContent[field] || ""
+    updateField(field, current ? `${current} ${note}` : note)
+  }
 
-          {/* Part II: Build arguments */}
-          <Card className="shadow-sm hover:shadow-md transition-shadow duration-200 border-0 bg-gradient-to-br from-purple-50/50 to-pink-50/30">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-lg font-semibold text-gray-900 flex items-center gap-2">
-                <div className="h-8 w-8 rounded-lg bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center shadow-md">
-                  <Sparkles className="h-4 w-4 text-white" />
-                </div>
-                Why social media platform should hold accountability for social media addiction?
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-            <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="block text-sm font-medium text-gray-700">
-                    Write some bullet points to map out the core arguments.
-                  </label>
-                  <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                    {calculateFieldWordCount(structuredContent.part1_concept2)} words
-                  </span>
-                </div>
-                <Textarea
-                  value={structuredContent.part1_concept2}
-                  onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => 
-                    handleStructuredContentChange("part1_concept2", e.target.value)
-                  }
-                  placeholder="Edit your essay here..."
-                  className="w-full h-32 p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </ScrollArea>
-    </div>
-  )
+  async function handleSubmitFinal() {
+    setIsSubmitting(true)
+    setSubmitStatus("idle")
+    if (timerRef.current) {
+      clearTimeout(timerRef.current)
+      const payload = JSON.stringify({
+        field1: structuredContent.part1_concept1 || "",
+        field2: structuredContent.part1_concept2 || "",
+        part1_concept1: structuredContent.part1_concept1 || "",
+        part1_concept2: structuredContent.part1_concept2 || "",
+      })
+      await saveDocumentSnapshot(payload, groupId)
+    }
+    const result = await submitFinalDocument(groupId)
+    setSubmitStatus(result.error ? "error" : "success")
+    setIsSubmitting(false)
+    if (!result.error) {
+      setSaveStatus("saved")
+      setHasUnsavedChanges(false)
+      setTimeout(() => setSubmitStatus("idle"), 3000)
+    }
+  }
+
+  const statusLabel =
+    saveStatus === "error" ? "Save failed" : hasUnsavedChanges || saveStatus === "saving" ? "Saving" : "Saved"
 
   return (
-    <div className="flex flex-col h-full w-full">
-      {/* 美化的Header - 与chat-panel保持一致 */}
-      <header className="p-4 border-b bg-white shadow-sm flex-shrink-0 relative overflow-hidden">
-        {/* 背景装饰 */}
-        <div className="absolute inset-0 bg-gradient-to-r from-purple-50/50 via-pink-50/30 to-rose-50/50" />
-        
-        <div className="relative z-10 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-xl bg-gradient-to-br from-purple-500 to-pink-600 flex items-center justify-center shadow-md">
-              <FileText className="h-5 w-5 text-white" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold text-gray-900">Editing Zone</h2>
-              <div className="flex items-center gap-2 text-sm text-gray-500">
-                <Sparkles className="h-3 w-3" />
-                <span>Please edit and modify here. After finishing, please click submit.</span>
-              </div>
-            </div>
-          </div>
-          
-          {/* 右侧状态指示器和操作按钮 */}
-          <div className="flex items-center gap-2">
-            <SaveStatusIndicator status={saveStatus} hasUnsavedChanges={hasUnsavedChanges} />
-            
-            {/* 提交按钮 */}
-            <Button
-              onClick={handleSubmitFinal}
-              disabled={isSubmitting}
-              className="h-8 px-3 bg-green-600 hover:bg-green-700 text-white text-sm font-medium rounded-lg transition-all duration-200 disabled:opacity-50"
-            >
-              {isSubmitting ? (
-                <>
-                  <div className="h-3 w-3 mr-1 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  Submitting...
-                </>
-              ) : submitStatus === "success" ? (
-                <>
-                  <div className="h-3 w-3 mr-1 bg-white rounded-full" />
-                  Submitted!
-                </>
-              ) : submitStatus === "error" ? (
-                <>
-                  <div className="h-3 w-3 mr-1 bg-red-300 rounded-full" />
-                  Failed
-                </>
-              ) : (
-                <>
-                  <div className="h-3 w-3 mr-1 bg-white rounded-full" />
-                  Submit Final
-                </>
-              )}
-            </Button>
-            
-          </div>
+    <section className="flex h-full min-h-0 flex-col overflow-hidden bg-white text-neutral-950">
+      <header className="flex shrink-0 items-center justify-between gap-3 border-b border-neutral-200 px-4 py-2.5">
+        <div className="min-w-0">
+          <h2 className="truncate text-base font-bold tracking-tight">Your essay</h2>
+          <p className="truncate text-xs text-neutral-500">Both parts stay on screen. Autosaves as you type.</p>
         </div>
-        
-        {/* 底部装饰线 */}
-        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-purple-500 via-pink-500 to-rose-500" />
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 px-2.5 py-1 text-[11px] font-semibold text-neutral-700">
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                saveStatus === "error" ? "bg-neutral-400" : hasUnsavedChanges ? "bg-neutral-400" : "bg-neutral-950"
+              }`}
+            />
+            {statusLabel}
+          </span>
+          <Button
+            type="button"
+            onClick={handleSubmitFinal}
+            disabled={isSubmitting}
+            className="h-8 rounded-lg bg-neutral-950 px-3.5 text-xs font-semibold text-white hover:bg-neutral-800"
+          >
+            {isSubmitting
+              ? "Submitting..."
+              : submitStatus === "success"
+                ? "Submitted"
+                : submitStatus === "error"
+                  ? "Try again"
+                  : "Submit final"}
+          </Button>
+        </div>
       </header>
 
-      {editorComponent}
-    </div>
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2.5">
+        <article className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-neutral-900/15 bg-white">
+          <div className="flex shrink-0 items-center gap-2 border-b border-neutral-200 px-3 py-2">
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded bg-neutral-950 text-[10px] font-bold text-white">
+              1
+            </span>
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-sm font-bold">Initial thoughts on both sides</h3>
+              <p className="truncate text-[11px] text-neutral-500">
+                Should generative AI in social media content be regulated?
+              </p>
+            </div>
+            <span className="shrink-0 text-[11px] font-semibold tabular-nums text-neutral-500">
+              {wordCount(structuredContent.part1_concept1)} words
+            </span>
+          </div>
+          <Textarea
+            value={structuredContent.part1_concept1}
+            onChange={(event) => updateField("part1_concept1", event.target.value)}
+            placeholder="Set out the question, then sketch the case for regulation and the case against it."
+            className="h-0 min-h-0 flex-1 basis-0 resize-none rounded-none border-0 bg-white px-3 py-2 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+          />
+        </article>
+
+        <article className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-neutral-900/15 bg-white">
+          <div className="flex shrink-0 items-center gap-2 border-b border-neutral-200 px-3 py-2">
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-neutral-950 text-[10px] font-bold">
+              2
+            </span>
+            <div className="min-w-0 flex-1">
+              <h3 className="truncate text-sm font-bold">New insights and supplementary points</h3>
+              <p className="truncate text-[11px] text-neutral-500">
+                What did the discussion change? Mark where ideas came from.
+              </p>
+            </div>
+            <span className="shrink-0 text-[11px] font-semibold tabular-nums text-neutral-500">
+              {wordCount(structuredContent.part1_concept2)} words
+            </span>
+          </div>
+          <div className="shrink-0 border-b border-neutral-100 px-3 py-1.5">
+            <InspiredByButton
+              groupMembers={groupMembers}
+              onSelect={(name) => addInspiration("part1_concept2", name)}
+            />
+          </div>
+          <Textarea
+            value={structuredContent.part1_concept2}
+            onChange={(event) => updateField("part1_concept2", event.target.value)}
+            placeholder="What did the conversation add? Which claim still feels thin?"
+            className="h-0 min-h-0 flex-1 basis-0 resize-none rounded-none border-0 bg-neutral-50 px-3 py-2 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+          />
+        </article>
+      </div>
+    </section>
   )
 }

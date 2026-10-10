@@ -7,7 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Shield, Database, Eye, Users, Lock } from "lucide-react"
 
 interface DataCollectionConsentProps {
-  userId: number
+  userId: string | number
   onConsentGiven: (consent: boolean) => void
 }
 
@@ -127,7 +127,7 @@ export default function DataCollectionConsent({ userId, onConsentGiven }: DataCo
                   id="consent-agree" 
                   checked={consentGiven === true}
                   onCheckedChange={(checked) => setConsentGiven(checked ? true : null)}
-                  className="mt-0.5"
+                  className="mt-0.5 h-3 w-3"
                 />
                 <div className="flex-1">
                   <label htmlFor="consent-agree" className="text-sm text-green-800 cursor-pointer font-medium">
@@ -144,7 +144,7 @@ export default function DataCollectionConsent({ userId, onConsentGiven }: DataCo
                   id="consent-disagree" 
                   checked={consentGiven === false}
                   onCheckedChange={(checked) => setConsentGiven(checked ? false : null)}
-                  className="mt-0.5"
+                  className="mt-0.5 h-3 w-3"
                 />
                 <div className="flex-1">
                   <label htmlFor="consent-disagree" className="text-sm text-orange-800 cursor-pointer font-medium">

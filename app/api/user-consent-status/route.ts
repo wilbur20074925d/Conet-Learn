@@ -1,36 +1,39 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { getUserIdFromCookie } from '@/lib/session'
-import sql from '@/lib/db'
+import { NextRequest, NextResponse } from "next/server"
+import { withApiLogging } from "@/lib/api-logger"
+import { createClient } from "@/lib/supabase/server"
 
-export async function GET(request: NextRequest) {
-  try {
-    const userId = await getUserIdFromCookie()
+export const GET = withApiLogging("user-consent-status:GET", async () => {
+  const supabase = await createClient()
+  const { data: authData } = await supabase.auth.getUser()
+  if (!authData.user) {
+    return NextResponse.json({ error: "User not authenticated" }, { status: 401 })
+  }
 
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'User not authenticated' },
-        { status: 401 }
-      )
-    }
-
-    // 查询用户同意状态
-    const consentRecord = await sql<{ consent_given: boolean; created_at: string }[]>`
-      SELECT consent_given, created_at 
-      FROM user_consent 
-      WHERE user_id = ${userId}
-    `
-
-    return NextResponse.json({
-      hasConsentRecord: consentRecord.length > 0,
-      consentGiven: consentRecord.length > 0 ? consentRecord[0].consent_given : null,
-      createdAt: consentRecord.length > 0 ? consentRecord[0].created_at : null
-    })
-
-  } catch (error) {
-    console.error('Error fetching user consent status:', error)
+  const profile = await supabase.from("ConetUsers").select("id").eq("auth_id", authData.user.id).maybeSingle()
+  if (profile.error) {
+    const missing = profile.error.code === "PGRST205"
     return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
+      { error: missing ? "Conet tables are not ready" : "Internal server error" },
+      { status: missing ? 503 : 500 }
     )
   }
-}
+  if (!profile.data) {
+    return NextResponse.json({ hasConsentRecord: false, consentGiven: null, createdAt: null })
+  }
+
+  const consent = await supabase
+    .from("ConetUserConsent")
+    .select("consent_given, created_at")
+    .eq("user_id", profile.data.id)
+    .maybeSingle()
+
+  if (consent.error) {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  }
+
+  return NextResponse.json({
+    hasConsentRecord: Boolean(consent.data),
+    consentGiven: consent.data ? consent.data.consent_given : null,
+    createdAt: consent.data ? consent.data.created_at : null,
+  })
+})

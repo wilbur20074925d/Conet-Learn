@@ -1,10 +1,10 @@
 "use client"
 
 import { useState } from "react"
-import DataCollectionConsent from "./data-collection-consent"
+import WelcomeModal from "./welcome-modal"
 
 interface ConsentWrapperProps {
-  userId: number
+  userId: string
 }
 
 export default function ConsentWrapper({ userId }: ConsentWrapperProps) {
@@ -16,7 +16,7 @@ export default function ConsentWrapper({ userId }: ConsentWrapperProps) {
   }
 
   return (
-    <DataCollectionConsent 
+    <WelcomeModal 
       userId={userId} 
       onConsentGiven={handleConsentGiven}
     />

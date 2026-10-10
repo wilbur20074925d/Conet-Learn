@@ -1,83 +1,65 @@
-import { NextRequest, NextResponse } from 'next/server'
-import sql from '@/lib/db'
+import { NextRequest, NextResponse } from "next/server"
+import { withApiLogging } from "@/lib/api-logger"
+import { createClient } from "@/lib/supabase/server"
 
-export async function POST(request: NextRequest) {
-  try {
-    const { userId, consentGiven } = await request.json()
-
-    if (!userId || typeof consentGiven !== 'boolean') {
-      return NextResponse.json(
-        { error: 'Invalid request data' },
-        { status: 400 }
-      )
-    }
-
-    // 检查用户是否存在
-    const userExists = await sql<{ id: number }[]>`
-      SELECT id FROM users WHERE id = ${userId}
-    `
-
-    if (userExists.length === 0) {
-      return NextResponse.json(
-        { error: 'User not found' },
-        { status: 404 }
-      )
-    }
-
-    // 插入或更新用户同意状态
-    await sql`
-      INSERT INTO user_consent (user_id, consent_given, created_at, updated_at)
-      VALUES (${userId}, ${consentGiven}, NOW(), NOW())
-      ON CONFLICT (user_id) 
-      DO UPDATE SET 
-        consent_given = ${consentGiven},
-        updated_at = NOW()
-    `
-
-    return NextResponse.json({ 
-      success: true, 
-      message: 'Consent status saved successfully' 
-    })
-
-  } catch (error) {
-    console.error('Error saving user consent:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+export const POST = withApiLogging("user-consent:POST", async (request: NextRequest) => {
+  const supabase = await createClient()
+  const { data: authData } = await supabase.auth.getUser()
+  if (!authData.user) {
+    return NextResponse.json({ error: "User not authenticated" }, { status: 401 })
   }
-}
 
-export async function GET(request: NextRequest) {
-  try {
-    const { searchParams } = new URL(request.url)
-    const userId = searchParams.get('userId')
-
-    if (!userId) {
-      return NextResponse.json(
-        { error: 'User ID is required' },
-        { status: 400 }
-      )
-    }
-
-    // 查询用户同意状态
-    const consentRecord = await sql<{ consent_given: boolean; created_at: string }[]>`
-      SELECT consent_given, created_at 
-      FROM user_consent 
-      WHERE user_id = ${parseInt(userId)}
-    `
-
-    return NextResponse.json({
-      hasConsentRecord: consentRecord.length > 0,
-      consentGiven: consentRecord.length > 0 ? consentRecord[0].consent_given : null,
-      createdAt: consentRecord.length > 0 ? consentRecord[0].created_at : null
-    })
-
-  } catch (error) {
-    console.error('Error fetching user consent:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
+  const body = await request.json().catch(() => null)
+  if (!body || typeof body.consentGiven !== "boolean") {
+    return NextResponse.json({ error: "Invalid request data" }, { status: 400 })
   }
-}
+
+  const profile = await supabase.from("ConetUsers").select("id").eq("auth_id", authData.user.id).maybeSingle()
+  if (!profile.data) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 })
+  }
+
+  const saved = await supabase.from("ConetUserConsent").upsert(
+    {
+      user_id: profile.data.id,
+      consent_given: body.consentGiven,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: "user_id" }
+  )
+
+  if (saved.error) {
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 })
+  }
+
+  return NextResponse.json({ success: true, message: "Consent status saved successfully" })
+})
+
+export const GET = withApiLogging("user-consent:GET", async (request: NextRequest) => {
+  const supabase = await createClient()
+  const { data: authData } = await supabase.auth.getUser()
+  if (!authData.user) {
+    return NextResponse.json({ error: "User not authenticated" }, { status: 401 })
+  }
+
+  const requested = new URL(request.url).searchParams.get("userId")
+  const profile = await supabase.from("ConetUsers").select("id").eq("auth_id", authData.user.id).maybeSingle()
+  if (!profile.data) {
+    return NextResponse.json({ hasConsentRecord: false, consentGiven: null, createdAt: null })
+  }
+  if (requested && requested !== profile.data.id) {
+    return NextResponse.json({ error: "User not found" }, { status: 404 })
+  }
+
+  const consent = await supabase
+    .from("ConetUserConsent")
+    .select("consent_given, created_at")
+    .eq("user_id", profile.data.id)
+    .maybeSingle()
+
+  return NextResponse.json({
+    hasConsentRecord: Boolean(consent.data),
+    consentGiven: consent.data ? consent.data.consent_given : null,
+    createdAt: consent.data ? consent.data.created_at : null,
+  })
+})

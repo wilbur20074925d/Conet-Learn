@@ -1,524 +1,426 @@
 "use server"
 
 import { revalidatePath } from "next/cache"
-import sql from "./db"
 import { z } from "zod"
-import { getUserIdFromCookie } from "./session"
+import { createClient } from "./supabase/server"
+import {
+  NATE_THINKING,
+  NATE_USER_ID,
+  mentionsNATE,
+  normalizeNateMode,
+  requestNateReply,
+  type NateMode,
+} from "./nate"
 
-// --- Type Definitions ---
-export interface Message {
-  id: number
-  content: string
-  created_at: string
-  user_id: number
+import { mapMessageRows, type Message, type RawMessage } from "./map-messages"
+
+export type { Message }
+
+export interface GroupMember {
+  id: string
   name: string
-  avatar_url: string
-  reply_to?: number | null  
-  is_reply?: boolean     
-  original_message?: {      
-    id: number
-    content: string
-    user_name: string
+  avatar_url?: string | null
+  role: string
+}
+
+export interface SessionContext {
+  profileId: string
+  name: string
+  email: string | null
+  role: "teacher" | "student" | "ai"
+  groupId: string
+  groupName: string
+  newintervene: NateMode
+}
+
+type ProfileRow = {
+  id: string
+  email: string | null
+  name: string
+  role: "teacher" | "student" | "ai"
+  avatar_url: string | null
+  auth_id: string | null
+}
+
+function missingTable(error: { code?: string; message?: string } | null) {
+  if (!error) return false
+  return error.code === "PGRST205" || error.code === "42P01" || /Conet/i.test(error.message || "") && /schema cache|does not exist/i.test(error.message || "")
+}
+
+export async function getSessionContext(): Promise<
+  { ok: true; ctx: SessionContext; members: GroupMember[] } | { ok: false; error: string; needsSetup?: boolean }
+> {
+  const supabase = await createClient()
+  const { data: authData, error: authError } = await supabase.auth.getUser()
+  if (authError || !authData.user) return { ok: false, error: "Unauthorized" }
+
+  const user = authData.user
+  let profile: ProfileRow | null = null
+  const profileQuery = await supabase
+    .from("ConetUsers")
+    .select("id, email, name, role, avatar_url, auth_id")
+    .eq("auth_id", user.id)
+    .maybeSingle()
+
+  if (profileQuery.error) {
+    if (missingTable(profileQuery.error)) {
+      return {
+        ok: false,
+        needsSetup: true,
+        error: "The Conet tables are not in Supabase yet. Run supabase/conet-schema.sql in the SQL editor, then sign in again.",
+      }
+    }
+    return { ok: false, error: profileQuery.error.message }
+  }
+
+  profile = profileQuery.data
+
+  if (!profile) {
+    const role = user.user_metadata?.role === "teacher" ? "teacher" : "student"
+    const inserted = await supabase
+      .from("ConetUsers")
+      .insert({
+        auth_id: user.id,
+        email: user.email,
+        name: user.user_metadata?.name || user.email?.split("@")[0] || "Student",
+        role,
+      })
+      .select("id, email, name, role, avatar_url, auth_id")
+      .single()
+    if (inserted.error || !inserted.data) {
+      return { ok: false, error: inserted.error?.message || "Could not create your profile." }
+    }
+    profile = inserted.data
+  }
+
+  const membership = await supabase.rpc("conet_ensure_membership")
+  if (membership.error) {
+    if (missingTable(membership.error) || membership.error.code === "PGRST202") {
+      return {
+        ok: false,
+        needsSetup: true,
+        error: "The Conet tables are not in Supabase yet. Run supabase/conet-schema.sql in the SQL editor, then sign in again.",
+      }
+    }
+    return { ok: false, error: membership.error.message }
+  }
+
+  const group = membership.data as {
+    group_id: string
+    group_name: string
+    newintervene: number
+    user_id: string
+  }
+
+  const membersQuery = await supabase
+    .from("ConetGroupMembers")
+    .select("user_id, ConetUsers(id, name, avatar_url, role)")
+    .eq("group_id", group.group_id)
+
+  const members: GroupMember[] = []
+  if (!membersQuery.error && membersQuery.data) {
+    for (const row of membersQuery.data as Array<{ ConetUsers: GroupMember | GroupMember[] | null }>) {
+      const person = Array.isArray(row.ConetUsers) ? row.ConetUsers[0] : row.ConetUsers
+      if (person && person.role !== "ai") members.push(person)
+    }
+  }
+
+  return {
+    ok: true,
+    ctx: {
+      profileId: profile.id,
+      name: profile.name,
+      email: profile.email,
+      role: profile.role,
+      groupId: group.group_id,
+      groupName: group.group_name,
+      newintervene: normalizeNateMode(group.newintervene),
+    },
+    members,
   }
 }
 
-export interface DocumentHistory {
-  id: number
-  user_id: number
-  name: string
-  avatar_url: string
-  created_at: string
-  is_submit: boolean
-}
+export async function getMessages(groupId: string): Promise<Message[]> {
+  const supabase = await createClient()
+  const { data, error } = await supabase
+    .from("ConetMessages")
+    .select("id, content, created_at, user_id, reply_to, is_reply, ConetUsers(name, avatar_url, role)")
+    .eq("group_id", groupId)
+    .order("created_at", { ascending: true })
 
-// --- Chatbot Configuration ---
-const NATE_USER_ID = 999
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY
-const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-// --- Message Actions ---
-export async function getMessages(groupId: number): Promise<Message[]> {
-  const messages = await sql<Message[]>`
-    SELECT 
-      m.id, 
-      m.content, 
-      m.created_at, 
-      m.user_id, 
-      m.reply_to,
-      m.is_reply,
-      u.name, 
-      u.avatar_url,
-      CASE 
-        WHEN m.reply_to IS NOT NULL THEN
-          (SELECT json_build_object(
-            'id', orig_m.id,
-            'content', orig_m.content,
-            'user_name', orig_u.name
-          ))
-        ELSE NULL
-      END as original_message
-    FROM messages m
-    JOIN users u ON m.user_id = u.id
-    LEFT JOIN messages orig_m ON m.reply_to = orig_m.id
-    LEFT JOIN users orig_u ON orig_m.user_id = orig_u.id
-    WHERE m.group_id = ${groupId}
-    ORDER BY m.created_at ASC;
-  `
-  
-  // 确保user_id是number类型
-  return messages.map(msg => ({
-    ...msg,
-    user_id: Number(msg.user_id),
-    reply_to: msg.reply_to ? Number(msg.reply_to) : null,
-    original_message: msg.original_message ? {
-      ...msg.original_message,
-      id: Number(msg.original_message.id)
-    } : undefined
-  }))
+  if (error || !data) return []
+  return mapMessageRows(data as RawMessage[])
 }
 
 const messageSchema = z.object({
-  message: z.string().min(1, "Message cannot be empty"),
-  groupId: z.coerce.number(),
-  replyTo: z.coerce.number().optional(), // 新增：可选的回复消息ID
+  message: z.string().trim().min(1, "Message cannot be empty"),
+  groupId: z.string().uuid(),
+  replyTo: z.string().uuid().optional().or(z.literal("")),
 })
 
-// Check if message mentions NATE
-function mentionsNATE(message: string): boolean {
-  return message.toLowerCase().includes('@nate') || message.toLowerCase().includes('@nate ')
+async function shouldTriggerNate(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  message: string,
+  replyTo?: string | null
+) {
+  if (mentionsNATE(message)) return true
+  if (!replyTo) return false
+  const replied = await supabase.from("ConetMessages").select("user_id").eq("id", replyTo).maybeSingle()
+  return replied.data?.user_id === NATE_USER_ID
 }
 
-// Get recent chat history for context
-async function getRecentChatHistory(groupId: number, limit: number = 10): Promise<Message[]> {
-  const messages = await sql<Message[]>`
-    SELECT m.id, m.content, m.created_at, m.user_id, u.name, u.avatar_url
-    FROM messages m
-    JOIN users u ON m.user_id = u.id
-    WHERE m.group_id = ${groupId}
-    ORDER BY m.created_at DESC
-    LIMIT ${limit};
-  `
-  
-  // 确保user_id是number类型
-  return messages.map(msg => ({
-    ...msg,
-    user_id: Number(msg.user_id)
-  }))
-}
+export async function sendMessage(_prevState: unknown, formData: FormData) {
+  const session = await getSessionContext()
+  if (!session.ok) return { error: session.error }
 
-// Call OpenRouter API to get NATE's response
-async function getNATEResponse(messages: Message[], userMessage: string): Promise<string> {
-  if (!OPENROUTER_API_KEY) {
-    return "Sorry, I'm not configured properly. Please check the API key."
+  const parsed = messageSchema.safeParse({
+    message: formData.get("message"),
+    groupId: formData.get("groupId"),
+    replyTo: formData.get("replyTo") || undefined,
+  })
+  if (!parsed.success) return { error: "Invalid input." }
+
+  const { message, groupId } = parsed.data
+  const replyTo = parsed.data.replyTo || null
+  if (groupId !== session.ctx.groupId) return { error: "Unauthorized" }
+
+  const supabase = await createClient()
+  const inserted = await supabase.rpc("conet_send_message", {
+    p_group_id: groupId,
+    p_content: message,
+    p_reply_to: replyTo,
+  })
+
+  if (inserted.error) {
+    // Fallback for installs that have not run the RPC migration yet.
+    const direct = await supabase
+      .from("ConetMessages")
+      .insert({
+        group_id: groupId,
+        user_id: session.ctx.profileId,
+        content: message,
+        reply_to: replyTo,
+        is_reply: Boolean(replyTo),
+      })
+      .select("id")
+      .single()
+
+    if (direct.error) {
+      console.error("sendMessage failed", inserted.error, direct.error)
+      return { error: "Failed to send message, please try again." }
+    }
   }
 
-  try {
-    // Prepare conversation history for the AI
-    const conversationHistory = messages
-      .reverse() // Reverse to get chronological order
-      .map(msg => ({
-        role: msg.user_id === NATE_USER_ID ? "assistant" : "user",
-        content: `${msg.name}: ${msg.content}`
-      }))
+  const trigger = await shouldTriggerNate(supabase, message, replyTo)
+  if (!trigger || session.ctx.newintervene === 3) {
+    return { success: true as const, thinkingId: null as string | null }
+  }
 
-    // Add the current user message
-    conversationHistory.push({
-      role: "user",
-      content: userMessage
+  const thinking = await supabase.rpc("conet_post_nate_message", {
+    p_group_id: groupId,
+    p_content: NATE_THINKING,
+  })
+
+  let thinkingId: string | null = typeof thinking.data === "string" ? thinking.data : null
+  if (thinking.error || !thinkingId) {
+    const directThinking = await supabase
+      .from("ConetMessages")
+      .insert({
+        group_id: groupId,
+        user_id: NATE_USER_ID,
+        content: NATE_THINKING,
+        is_reply: false,
+      })
+      .select("id")
+      .single()
+    thinkingId = directThinking.data?.id ?? null
+  }
+
+  return { success: true as const, thinkingId }
+}
+
+export async function finishNateReply(groupId: string, thinkingId: string) {
+  const session = await getSessionContext()
+  if (!session.ok) return { error: session.error }
+  if (groupId !== session.ctx.groupId) return { error: "Unauthorized" }
+  if (session.ctx.newintervene === 3) return { success: true }
+
+  const supabase = await createClient()
+  const thinking = await supabase
+    .from("ConetMessages")
+    .select("id, content, created_at")
+    .eq("id", thinkingId)
+    .eq("group_id", groupId)
+    .maybeSingle()
+
+  if (!thinking.data || thinking.data.content !== NATE_THINKING) return { success: true }
+
+  const later = await supabase
+    .from("ConetMessages")
+    .select("id")
+    .eq("group_id", groupId)
+    .eq("user_id", NATE_USER_ID)
+    .neq("content", NATE_THINKING)
+    .gt("created_at", thinking.data.created_at)
+    .limit(1)
+
+  if (later.data && later.data.length > 0) return { success: true }
+
+  const recent = await supabase
+    .from("ConetMessages")
+    .select("content, user_id, created_at, ConetUsers(name)")
+    .eq("group_id", groupId)
+    .order("created_at", { ascending: false })
+    .limit(10)
+
+  const history = ((recent.data || []) as Array<{
+    content: string
+    user_id: string
+    ConetUsers: { name: string } | { name: string }[] | null
+  }>)
+    .reverse()
+    .map((row) => {
+      const author = Array.isArray(row.ConetUsers) ? row.ConetUsers[0] : row.ConetUsers
+      return {
+        user_id: row.user_id,
+        name: author?.name || "Member",
+        content: row.content,
+      }
     })
 
-    const response = await fetch(OPENROUTER_API_URL, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-        "HTTP-Referer": "http://localhost:3000",
-        "X-Title": "Student Chat App",
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: "openai/gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: "You are NATE, a helpful AI assistant in a student group chat. You help students with their debate preparation. Help students to learn how to construct an argument(claim,evidence,reasoning) and how to identify the logical fallacies. Always respond in English."
-          },
-          ...conversationHistory
-        ],
-        max_tokens: 500,
-        temperature: 0.7
-      })
+  const latestUser = [...history].reverse().find((row) => row.user_id !== NATE_USER_ID)
+  const reply = await requestNateReply(
+    history,
+    latestUser?.content || "Please join our discussion.",
+    session.ctx.newintervene
+  )
+
+  if (!reply) return { success: true }
+
+  const saved = await supabase.rpc("conet_post_nate_message", {
+    p_group_id: groupId,
+    p_content: reply,
+  })
+
+  if (saved.error) {
+    const direct = await supabase.from("ConetMessages").insert({
+      group_id: groupId,
+      user_id: NATE_USER_ID,
+      content: reply,
+      is_reply: false,
     })
-
-    if (!response.ok) {
-      console.error('OpenRouter API error:', response.status, response.statusText)
-      return "Sorry, I'm having trouble connecting to my AI service right now."
-    }
-
-    const data = await response.json()
-    return data.choices?.[0]?.message?.content || "I'm not sure how to respond to that."
-  } catch (error) {
-    console.error('Error calling OpenRouter API:', error)
-    return "Sorry, I encountered an error while processing your request."
+    if (direct.error) return { error: "NATE could not reply just now." }
   }
+  revalidatePath("/")
+  return { success: true }
 }
 
-export async function sendMessage(prevState: any, formData: FormData) {
-  const userId = await getUserIdFromCookie()
-  if (!userId) return { error: "Unauthorized" }
-
-  const validatedFields = messageSchema.safeParse(Object.fromEntries(formData.entries()))
-  if (!validatedFields.success) {
-    return { error: "Invalid input." }
-  }
-
-  const { message, groupId, replyTo } = validatedFields.data
-
-  try {
-    // Insert the user's message with reply information
-    await sql`
-      INSERT INTO messages (group_id, user_id, content, reply_to, is_reply)
-      VALUES (${groupId}, ${userId}, ${message}, ${replyTo || null}, ${replyTo ? true : false});
-    `
-
-    // Check if the message mentions NATE
-    if (mentionsNATE(message)) {
-      // 插入 NATE 的 "I am thinking..."
-      const thinkingMsg = await sql<{ id: number }[]>`
-        INSERT INTO messages (group_id, user_id, content)
-        VALUES (${groupId}, ${NATE_USER_ID}, 'I am thinking...')
-        RETURNING id;
-      `
-
-      // 注意：不要在这里直接生成 Nate 的回复
-      // 而是交给后台异步任务去处理
-      process.nextTick(async () => {
-        try {
-          // 获取上下文
-          const recentMessages = await getRecentChatHistory(groupId, 10)
-
-          // 生成 Nate 的回复
-          const nateResponse = await getNATEResponse(recentMessages, message)
-
-          // 插入最终回复（新消息）
-          await sql`
-            INSERT INTO messages (group_id, user_id, content)
-            VALUES (${groupId}, ${NATE_USER_ID}, ${nateResponse});
-          `
-
-          revalidatePath("/")
-        } catch (err) {
-          console.error("Error generating Nate response:", err)
-        }
-      })
-    }
-
-    revalidatePath("/")
-    return { success: true }
-  } catch (error) {
-    console.error(error)
-    return { error: "Failed to send message, please try again." }
-  }
+export async function getDocument(groupId: string, profileId: string) {
+  const supabase = await createClient()
+  const { data } = await supabase
+    .from("ConetDocuments")
+    .select("content")
+    .eq("group_id", groupId)
+    .eq("user_id", profileId)
+    .maybeSingle()
+  return data?.content ?? ""
 }
 
-// --- Document Actions ---
-export async function getDocument(groupId: number, userId?: number) {
-  if (userId) {
-    // 获取特定用户的文档
-    const result = await sql<{ content: string }[]>`
-      SELECT content FROM documents 
-      WHERE group_id = ${groupId} AND user_id = ${userId};
-    `
-    return result[0]?.content ?? ""
+export async function saveDocumentSnapshot(content: string | null | undefined, groupId: string) {
+  const session = await getSessionContext()
+  if (!session.ok) return { error: session.error }
+  if (content === null || content === undefined) return { error: "Invalid content." }
+  if (groupId !== session.ctx.groupId) return { error: "Unauthorized" }
+
+  const supabase = await createClient()
+  const existing = await supabase
+    .from("ConetDocuments")
+    .select("id")
+    .eq("group_id", groupId)
+    .eq("user_id", session.ctx.profileId)
+    .maybeSingle()
+
+  let documentId = existing.data?.id as string | undefined
+  if (!documentId) {
+    const created = await supabase
+      .from("ConetDocuments")
+      .insert({ group_id: groupId, user_id: session.ctx.profileId, content })
+      .select("id")
+      .single()
+    if (created.error || !created.data) return { error: "Failed to save snapshot, please try again." }
+    documentId = created.data.id
   } else {
-    // 获取共享文档（向后兼容）
-    const result = await sql<{ content: string }[]>`
-      SELECT content FROM documents WHERE group_id = ${groupId} AND user_id IS NULL;
-    `
-    return result[0]?.content ?? ""
+    const updated = await supabase
+      .from("ConetDocuments")
+      .update({ content, updated_at: new Date().toISOString() })
+      .eq("id", documentId)
+    if (updated.error) return { error: "Failed to save snapshot, please try again." }
   }
+
+  const history = await supabase.from("ConetDocumentHistory").insert({
+    document_id: documentId,
+    user_id: session.ctx.profileId,
+    content,
+    is_submit: false,
+  })
+  if (history.error) return { error: "Failed to save snapshot, please try again." }
+
+  return { success: true }
 }
 
-export async function getDocumentHistory(groupId: number, userId?: number): Promise<DocumentHistory[]> {
-  if (userId) {
-    // 获取特定用户的文档历史
-    const doc = await sql<{ id: number }[]>`SELECT id FROM documents WHERE group_id = ${groupId} AND user_id = ${userId}`
-    if (!doc.length) return []
+export async function submitFinalDocument(groupId: string) {
+  const session = await getSessionContext()
+  if (!session.ok) return { error: session.error }
+  if (groupId !== session.ctx.groupId) return { error: "Unauthorized" }
 
-    const history = await sql<DocumentHistory[]>`
-      SELECT h.id, h.user_id, h.created_at, h.is_submit, u.name, u.avatar_url
-      FROM document_history h
-      JOIN users u ON h.user_id = u.id
-      WHERE h.document_id = ${doc[0].id}
-      ORDER BY h.created_at DESC;
-    `
-    
-    return history.map(item => ({
-      ...item,
-      user_id: Number(item.user_id)
-    }))
-  } else {
-    // 获取共享文档历史（向后兼容）
-    const doc = await sql<{ id: number }[]>`SELECT id FROM documents WHERE group_id = ${groupId} AND user_id IS NULL`
-    if (!doc.length) return []
+  const supabase = await createClient()
+  const doc = await supabase
+    .from("ConetDocuments")
+    .select("id, content")
+    .eq("group_id", groupId)
+    .eq("user_id", session.ctx.profileId)
+    .maybeSingle()
 
-    const history = await sql<DocumentHistory[]>`
-      SELECT h.id, h.user_id, h.created_at, h.is_submit, u.name, u.avatar_url
-      FROM document_history h
-      JOIN users u ON h.user_id = u.id
-      WHERE h.document_id = ${doc[0].id}
-      ORDER BY h.created_at DESC;
-    `
-    
-    return history.map(item => ({
-      ...item,
-      user_id: Number(item.user_id)
-    }))
-  }
-}
+  if (!doc.data) return { error: "Document not found. Write something before submitting." }
 
-export async function saveDocument(content: string | null | undefined, groupId: number) {
-  const userId = await getUserIdFromCookie()
-  if (!userId) return { error: "Unauthorized" }
+  const latest = await supabase
+    .from("ConetDocumentHistory")
+    .select("content")
+    .eq("document_id", doc.data.id)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle()
 
-  if (content === null || content === undefined) {
-    return { error: "Invalid content." }
-  }
+  const contentToSubmit = latest.data?.content ?? doc.data.content
+  const updated = await supabase
+    .from("ConetDocuments")
+    .update({ content: contentToSubmit, updated_at: new Date().toISOString() })
+    .eq("id", doc.data.id)
+  if (updated.error) return { error: "Failed to submit document, please try again." }
 
-  try {
-    const doc = await sql<{ id: number; content: string }[]>`
-      SELECT id, content FROM documents WHERE group_id = ${groupId};
-    `
-    if (!doc.length) {
-      return { error: "Document not found." }
-    }
-    const documentId = doc[0].id
-    const currentContent = doc[0].content
-
-    if (content === currentContent) {
-      return { success: true, changed: false }
-    }
-
-    // 使用单独的查询而不是事务
-    try {
-      // 更新文档
-      await sql`
-        UPDATE documents
-        SET content = ${content}, last_updated_by = ${userId}, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ${documentId}
-      `
-
-      // 添加历史记录
-      await sql`
-        INSERT INTO document_history (document_id, user_id, content)
-        VALUES (${documentId}, ${userId}, ${content})
-      `
-    } catch (error) {
-      console.error('Database error:', error)
-      throw error
-    }
-
-    revalidatePath("/")
-    return { success: true, changed: true }
-  } catch (error) {
-    console.error(error)
-    return { error: "Failed to save, please try again." }
-  }
-}
-
-// --- Snapshot-only Action (append to document_history without updating documents) ---
-export async function saveDocumentSnapshot(content: string | null | undefined, groupId: number) {
-  const userId = await getUserIdFromCookie()
-  if (!userId) return { error: "Unauthorized" }
-
-  if (content === null || content === undefined) {
-    return { error: "Invalid content." }
-  }
-
-  try {
-    // 查找或创建用户特定的文档
-    let doc = await sql<{ id: number }[]>`
-      SELECT id FROM documents WHERE group_id = ${groupId} AND user_id = ${userId};
-    `
-    
-    if (!doc.length) {
-      // 如果用户文档不存在，创建一个
-      const newDoc = await sql<{ id: number }[]>`
-        INSERT INTO documents (group_id, user_id, content) 
-        VALUES (${groupId}, ${userId}, ${content})
-        RETURNING id;
-      `
-      doc = newDoc
-    }
-    
-    const documentId = doc[0].id
-
-    // 更新文档内容
-    await sql`
-      UPDATE documents 
-      SET content = ${content}
-      WHERE id = ${documentId}
-    `
-
-    // 添加历史记录
-    await sql`
-      INSERT INTO document_history (document_id, user_id, content)
-      VALUES (${documentId}, ${userId}, ${content})
-    `
-
-    revalidatePath("/")
-    return { success: true }
-  } catch (error) {
-    console.error(error)
-    return { error: "Failed to save snapshot, please try again." }
-  }
-}
-
-// --- Final Submit Action ---
-export async function submitFinalDocument(groupId: number) {
-  const userId = await getUserIdFromCookie()
-  if (!userId) return { error: "Unauthorized" }
-
-  try {
-    // Get the target document id and current content for this specific user
-    const doc = await sql<{ id: number; content: string }[]>`
-      SELECT id, content FROM documents WHERE group_id = ${groupId} AND user_id = ${userId};
-    `
-    
-    if (!doc.length) {
-      return { error: "Document not found." }
-    }
-
-    const documentId = doc[0].id
-
-    // Use the latest snapshot from document_history if available; fallback to current document content
-    const latestHistory = await sql<{ content: string }[]>`
-      SELECT content FROM document_history 
-      WHERE document_id = ${documentId}
-      ORDER BY created_at DESC
-      LIMIT 1;
-    `
-    const contentToSubmit = latestHistory[0]?.content ?? doc[0].content
-
-    // Mark the document as submitted and update the final version
-    try {
-      // 只更新content列，这是最基本的列
-      await sql`
-        UPDATE documents
-        SET content = ${contentToSubmit}
-        WHERE id = ${documentId}
-      `
-
-      // 添加最终提交历史
-      await sql`
-        INSERT INTO document_history (document_id, user_id, content, is_submit)
-        VALUES (${documentId}, ${userId}, ${contentToSubmit}, true)
-      `
-    } catch (error) {
-      console.error('Submit database error:', error)
-      throw error
-    }
-
-    revalidatePath("/")
-    return { success: true, message: "Document submitted successfully!" }
-  } catch (error) {
-    console.error(error)
-    return { error: "Failed to submit document, please try again." }
-  }
-}
-
-// --- Intervention Message Actions ---
-
-// Get groups that need intervention messages
-export async function getGroupsNeedingIntervention(): Promise<Array<{id: number, name: string, plan_time: string | null, monitor_time: string | null, evaluate_time: string | null}>> {
-  const groups = await sql<Array<{id: number, name: string, plan_time: string | null, monitor_time: string | null, evaluate_time: string | null}>>`
-    SELECT id, name, plan_time, monitor_time, evaluate_time
-    FROM groups 
-    WHERE intervene = true 
-    AND (
-      (plan_time IS NOT NULL AND plan_time <= NOW()) OR
-      (monitor_time IS NOT NULL AND monitor_time <= NOW()) OR
-      (evaluate_time IS NOT NULL AND evaluate_time <= NOW())
-    )
-  `
-  return groups
-}
-
-// Send intervention message for a specific group and phase
-export async function sendInterventionMessage(groupId: number, phase: 'plan' | 'monitor' | 'evaluate'): Promise<void> {
-  const messages = {
-    plan: " It's time to plan our strategy! What goal will we set for this task, and how will we plan to reach it?",
-    monitor: " How is our work going? Are we staying on track with our plan? ",
-    evaluate: " How do you all feel about our solution and collaboration? ",
-  }
-
-  const message = messages[phase]
-  
-  // Insert the intervention message
-  await sql`
-    INSERT INTO messages (group_id, user_id, content)
-    VALUES (${groupId}, ${NATE_USER_ID}, ${message});
-  `
-
-  // Mark the intervention as sent by setting the time to NULL
-  const timeColumn = `${phase}_time`
-  await sql.unsafe(`
-    UPDATE groups 
-    SET ${timeColumn} = NULL 
-    WHERE id = ${groupId}
-  `)
+  const history = await supabase.from("ConetDocumentHistory").insert({
+    document_id: doc.data.id,
+    user_id: session.ctx.profileId,
+    content: contentToSubmit,
+    is_submit: true,
+  })
+  if (history.error) return { error: "Failed to submit document, please try again." }
 
   revalidatePath("/")
+  return { success: true, message: "Document submitted successfully!" }
 }
 
-// Check and send intervention messages for all groups
-export async function checkAndSendInterventionMessages(): Promise<void> {
-  try {
-    const groups = await getGroupsNeedingIntervention()
-    
-    for (const group of groups) {
-      // Check plan intervention
-      if (group.plan_time && new Date(group.plan_time) <= new Date()) {
-        await sendInterventionMessage(group.id, 'plan')
-      }
-      
-      // Check monitor intervention
-      if (group.monitor_time && new Date(group.monitor_time) <= new Date()) {
-        await sendInterventionMessage(group.id, 'monitor')
-      }
-      
-      // Check evaluate intervention
-      if (group.evaluate_time && new Date(group.evaluate_time) <= new Date()) {
-        await sendInterventionMessage(group.id, 'evaluate')
-      }
-    }
-  } catch (error) {
-    console.error('Error checking intervention messages:', error)
-  }
-}
+export async function updateGroupNewIntervention(groupId: string, newintervene: number) {
+  const session = await getSessionContext()
+  if (!session.ok) return { success: false, error: session.error }
+  if (session.ctx.role !== "teacher") return { success: false, error: "Only a teacher can change NATE's mode." }
+  if (groupId !== session.ctx.groupId) return { success: false, error: "Unauthorized" }
+  const mode = normalizeNateMode(newintervene)
+  if (![1, 2, 3].includes(newintervene)) return { success: false, error: "Unknown mode." }
 
-// Update group intervention settings
-export async function updateGroupIntervention(
-  groupId: number, 
-  intervene: boolean, 
-  planTime?: string, 
-  monitorTime?: string, 
-  evaluateTime?: string
-): Promise<{ success: boolean; error?: string }> {
-  try {
-    await sql`
-      UPDATE groups 
-      SET 
-        intervene = ${intervene},
-        plan_time = ${planTime || null},
-        monitor_time = ${monitorTime || null},
-        evaluate_time = ${evaluateTime || null}
-      WHERE id = ${groupId}
-    `
-    
-    revalidatePath("/")
-    return { success: true }
-  } catch (error) {
-    console.error('Error updating group intervention:', error)
-    return { success: false, error: "Failed to update intervention settings" }
-  }
+  const supabase = await createClient()
+  const updated = await supabase.from("ConetGroups").update({ newintervene: mode }).eq("id", groupId)
+  if (updated.error) return { success: false, error: "Failed to update NATE's mode." }
+  revalidatePath("/")
+  return { success: true }
 }

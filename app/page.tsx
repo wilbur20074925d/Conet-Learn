@@ -1,149 +1,111 @@
 import { redirect } from "next/navigation"
+import { BookOpen, LogOut } from "lucide-react"
 import ChatPanel from "@/components/chat-panel"
 import EditorPanel from "@/components/editor-panel"
-import { getMessages, getDocument, submitFinalDocument } from "@/lib/actions"
-import { getUserIdFromCookie } from "@/lib/session"
-import sql from "@/lib/db"
-import { Button } from "@/components/ui/button"
+import ConsentWrapper from "@/components/consent-wrapper"
+import NateModeSwitch from "@/components/nate-mode-switch"
+import { getDocument, getMessages, getSessionContext } from "@/lib/actions"
 import { logout } from "@/lib/auth.actions"
-import { GraduationCap, LogOut, Users, BookOpen, CheckCircle } from "lucide-react"
-import SubmitButton from "@/components/submit-button"
+import { Button } from "@/components/ui/button"
+
+export const dynamic = "force-dynamic"
+
+const PRE_TEST = "https://docs.google.com/forms/d/e/1FAIpQLSd7K9E5F6Zc9Q-7_D7hUbq9Tw9F0tvBxXO-8p987neg2futgA/viewform?usp=header"
+const POST_TEST = "https://docs.google.com/forms/d/e/1FAIpQLSc2ZBYWpaFGkSBQHkdKyLcLLQJrK8ogomjcN185vna6TJEnZg/viewform?usp=publish-editor"
 
 export default async function Home() {
-  const currentUserId = await getUserIdFromCookie()
-
-  // If no user is "logged in", redirect to the login page
-  if (!currentUserId) {
-    redirect("/login")
-  }
-
-  // Get the user's group info
-  const groupInfo = await sql<{ group_id: number; group_name: string }[]>`
-    SELECT g.id as group_id, g.name as group_name
-    FROM groups g
-    JOIN group_members gm ON g.id = gm.group_id
-    WHERE gm.user_id = ${currentUserId}
-    LIMIT 1;
-  `
-
-  if (!groupInfo.length) {
+  const session = await getSessionContext()
+  if (!session.ok) {
+    if (session.error === "Unauthorized") redirect("/login")
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
-        <div className="text-center p-8 bg-white rounded-2xl shadow-lg border border-gray-200">
-          <div className="h-16 w-16 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-md mx-auto mb-4">
-            <GraduationCap className="h-8 w-8 text-white" />
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">No Group Found</h1>
-          <p className="text-gray-600">You are not assigned to any group yet.</p>
+      <main className="conet-page-bg flex min-h-screen items-center justify-center px-6">
+        <div className="conet-surface max-w-lg p-8">
+          <p className="text-sm font-bold">
+            <span className="text-brand-blue">CoNet</span>
+            <span className="text-brand-green">Learn</span>
+          </p>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">Almost ready</h1>
+          <p className="mt-3 text-sm leading-relaxed text-slate-500">{session.error}</p>
         </div>
-      </div>
+      </main>
     )
   }
 
-  const groupId = groupInfo[0].group_id
-  const groupName = groupInfo[0].group_name
-
-  // Get initial data and current user info
-  const [messages, document, currentUser] = await Promise.all([
-    getMessages(groupId),
-    getDocument(groupId, currentUserId),
-    sql<{ id: number; name: string; avatar_url: string }[]>`
-      SELECT id, name, avatar_url
-      FROM users
-      WHERE id = ${currentUserId}
-      LIMIT 1;
-    `.then(users => users[0])
+  const { ctx, members } = session
+  const [messages, document] = await Promise.all([
+    getMessages(ctx.groupId),
+    getDocument(ctx.groupId, ctx.profileId),
   ])
+  const peers = members.filter((member) => member.id !== ctx.profileId && member.role !== "ai")
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* 美化的Header - 与chat-panel和editor-panel保持一致 */}
-      <header className="border-b bg-white shadow-sm flex-shrink-0 relative overflow-hidden">
-        {/* 背景装饰 */}
-        <div className="absolute inset-0 bg-gradient-to-r from-blue-50/50 via-indigo-50/30 to-purple-50/50" />
-        
-        <div className="relative z-10 px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="h-12 w-12 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-md">
-                <GraduationCap className="h-6 w-6 text-white" />
-              </div>
-              <div>
-                <h1 className="text-xl font-semibold text-gray-900">CoNetLearn</h1>
-                <div className="flex items-center gap-2 text-sm text-gray-500">
-                  <BookOpen className="h-3 w-3" />
-                  <span>Collaborative Learning Platform</span>
-                  <div className="h-1 w-1 bg-gray-400 rounded-full" />
-                  <span className="text-blue-600 font-medium">Active Session</span>
-                </div>
-              </div>
+    <div className="conet-page-bg flex h-dvh flex-col overflow-hidden text-slate-900">
+      <ConsentWrapper userId={ctx.profileId} />
+      <header className="border-b border-slate-200/80 bg-white/80 backdrop-blur-md">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-blue to-brand-green text-white shadow-sm">
+              <BookOpen className="h-5 w-5" />
             </div>
-            
-            {/* 右侧操作按钮 */}
-            <div className="flex items-center gap-3">
-              {/* Post Test Button */}
-              <a
-                href="https://docs.google.com/forms/d/e/1FAIpQLSdCNiCNTjfqK-9JQUDM_j79kFvn9ERXox31-FYL9-SAlxZ8fQ/viewform?usp=dialog"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-2 h-9 px-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 hover:bg-green-100 hover:border-green-300 text-green-700 font-medium transition-all duration-200 shadow-sm hover:shadow-md rounded-md text-sm"
-              >
-                <CheckCircle className="h-4 w-4" />
-                Learing Experiece Survey
-              </a>
-              
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 rounded-full border border-blue-200">
-                <Users className="h-4 w-4 text-blue-600" />
-                <span className="text-sm text-blue-700 font-medium">{groupName}</span>
-              </div>
-              
-              {/* Current User Info */}
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-green-50 rounded-full border border-green-200">
-                <span className="text-sm text-green-700 font-medium">UID: {currentUserId}</span>
-                {currentUser && (
-                  <span className="text-sm text-green-600">({currentUser.name})</span>
-                )}
-              </div>
-              
-              
-              {/* Logout Button */}
-              <form action={logout}>
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  className="h-9 px-4 bg-white border-gray-200 hover:bg-red-50 hover:border-red-200 hover:text-red-600 transition-all duration-200 shadow-sm hover:shadow-md"
-                >
-                  <LogOut className="h-4 w-4 mr-2" />
-                  Logout
-                </Button>
-              </form>
+            <div>
+              <p className="text-xl font-bold leading-none tracking-tight">
+                <span className="text-brand-blue">CoNet</span>
+                <span className="text-brand-green">Learn</span>
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                {ctx.name}
+                <span className="mx-1.5 text-slate-300">/</span>
+                {ctx.role === "teacher" ? "Teacher" : "Student"}
+                <span className="mx-1.5 text-slate-300">/</span>
+                {ctx.groupName}
+              </p>
             </div>
           </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {ctx.role === "teacher" && <NateModeSwitch groupId={ctx.groupId} mode={ctx.newintervene} />}
+            <a
+              href={PRE_TEST}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-200"
+            >
+              Pre test
+            </a>
+            <a
+              href={POST_TEST}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-200"
+            >
+              Post test
+            </a>
+            <form action={logout}>
+              <Button
+                type="submit"
+                variant="outline"
+                size="sm"
+                className="h-8 rounded-xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+              >
+                <LogOut className="mr-1.5 h-3.5 w-3.5" />
+                Logout
+              </Button>
+            </form>
+          </div>
         </div>
-        
-        {/* 底部装饰线 */}
-        <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-blue-500 via-indigo-500 to-purple-500" />
       </header>
-
-      {/* Main Content */}
-      <div className="flex h-[calc(100vh-88px)]">
-        {/* Chat Panel */}
-        <div className="w-1/2 border-r bg-white">
+      <div className="grid min-h-0 flex-1 gap-3 overflow-hidden p-3 lg:grid-cols-2">
+        <div className="conet-surface min-h-0 overflow-hidden">
           <ChatPanel
             initialMessages={messages}
-            currentUserId={currentUserId}
-            groupId={groupId}
-            groupName={groupName}
+            currentUserId={ctx.profileId}
+            groupId={ctx.groupId}
+            groupName={ctx.groupName}
+            currentUserName={ctx.name}
+            newintervene={ctx.newintervene}
           />
         </div>
-
-        {/* Editor Panel */}
-        <div className="w-1/2 bg-white">
-          <EditorPanel
-            initialContent={document}
-            groupId={groupId}
-            currentUser={currentUser}
-          />
+        <div className="conet-surface min-h-0 overflow-hidden">
+          <EditorPanel initialContent={document} groupId={ctx.groupId} groupMembers={peers} />
         </div>
       </div>
     </div>
