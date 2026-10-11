@@ -3,7 +3,8 @@
 import { useState, useEffect, useRef } from "react"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { GraduationCap, Users, BookOpen, Sparkles } from "lucide-react"
+import { Users, BookOpen, Sparkles } from "lucide-react"
+import BrandLogo from "@/components/brand-logo"
 
 interface WelcomeModalProps {
   userId: string
@@ -86,13 +87,9 @@ export default function WelcomeModal({ userId, onConsentGiven }: WelcomeModalPro
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
       <DialogContent className="flex max-h-[80vh] flex-col border border-slate-200 bg-white shadow-xl sm:max-w-lg sm:rounded-[28px]">
         <DialogHeader className="flex-shrink-0 pb-4 text-center">
-          <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-blue to-brand-green shadow-sm">
-            <GraduationCap className="h-8 w-8 text-white" />
-          </div>
+          <BrandLogo className="mx-auto h-auto w-full max-w-[240px]" />
           <DialogTitle className="text-center text-2xl font-bold tracking-tight text-slate-900">
-            Welcome to{" "}
-            <span className="text-brand-blue">CoNet</span>
-            <span className="text-brand-green">Learn</span>
+            Welcome
           </DialogTitle>
         </DialogHeader>
         

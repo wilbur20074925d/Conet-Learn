@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react"
 import { useRouter } from "next/navigation"
-import { BookOpen } from "lucide-react"
+import BrandLogo from "@/components/brand-logo"
 import { createClient } from "@/lib/supabase/browser"
 
 export default function LoginPage() {
@@ -35,15 +35,9 @@ export default function LoginPage() {
   return (
     <main className="conet-page-bg flex min-h-screen items-center justify-center px-4 py-10">
       <div className="w-full max-w-md overflow-hidden rounded-[28px] border border-slate-200/80 bg-white shadow-[0_20px_50px_-24px_rgba(15,23,42,0.25)]">
-        <div className="border-b border-slate-100 px-8 py-8 text-center">
-          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-blue to-brand-green text-white shadow-sm">
-            <BookOpen className="h-6 w-6" />
-          </div>
-          <p className="text-lg font-bold tracking-tight">
-            <span className="text-brand-blue">CoNet</span>
-            <span className="text-brand-green">Learn</span>
-          </p>
-          <h1 className="mt-3 text-2xl font-bold tracking-tight text-slate-900">Welcome back</h1>
+        <div className="border-b border-slate-100 px-8 pb-7 pt-5 text-center">
+          <BrandLogo priority className="mx-auto h-auto w-full max-w-[280px]" />
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">Welcome back</h1>
           <p className="mt-1.5 text-sm text-slate-500">Enter your email and password to continue</p>
         </div>
 

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation"
-import { BookOpen, LogOut } from "lucide-react"
+import { LogOut } from "lucide-react"
+import BrandLogo from "@/components/brand-logo"
 import ChatPanel from "@/components/chat-panel"
 import EditorPanel from "@/components/editor-panel"
 import ConsentWrapper from "@/components/consent-wrapper"
@@ -19,12 +20,9 @@ export default async function Home() {
     if (session.error === "Unauthorized") redirect("/login")
     return (
       <main className="conet-page-bg flex min-h-screen items-center justify-center px-6">
-        <div className="conet-surface max-w-lg p-8">
-          <p className="text-sm font-bold">
-            <span className="text-brand-blue">CoNet</span>
-            <span className="text-brand-green">Learn</span>
-          </p>
-          <h1 className="mt-2 text-2xl font-bold tracking-tight text-slate-900">Almost ready</h1>
+        <div className="conet-surface max-w-lg p-8 text-center">
+          <BrandLogo className="mx-auto h-auto w-full max-w-[220px]" />
+          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">Almost ready</h1>
           <p className="mt-3 text-sm leading-relaxed text-slate-500">{session.error}</p>
         </div>
       </main>
@@ -44,15 +42,9 @@ export default async function Home() {
       <header className="border-b border-slate-200/80 bg-white/80 backdrop-blur-md">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-brand-blue to-brand-green text-white shadow-sm">
-              <BookOpen className="h-5 w-5" />
-            </div>
+            <BrandLogo priority className="h-16 w-auto" />
             <div>
-              <p className="text-xl font-bold leading-none tracking-tight">
-                <span className="text-brand-blue">CoNet</span>
-                <span className="text-brand-green">Learn</span>
-              </p>
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="text-xs text-slate-500">
                 {ctx.name}
                 <span className="mx-1.5 text-slate-300">/</span>
                 {ctx.role === "teacher" ? "Teacher" : "Student"}
