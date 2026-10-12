@@ -1,13 +1,14 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import ChatPanel from "@/components/chat-panel"
 import StudentAccounts from "@/components/student-accounts"
 import TeacherBoard from "@/components/teacher-board"
 import { EMPTY_MESSAGES, useSessionBundles } from "@/components/use-session-bundles"
+import { canonicalSession } from "@/lib/canonical-session"
 import type { BoardGroup, ClassroomStudent } from "@/lib/classroom"
 import type { Message } from "@/lib/map-messages"
-import { deleteChatSessionNow, writeSessionQuery } from "@/lib/session-browser"
+import { writeSessionQuery } from "@/lib/session-browser"
 
 function EmptySession({ title, body }: { title: string; body: string }) {
   return (
@@ -18,14 +19,6 @@ function EmptySession({ title, body }: { title: string; body: string }) {
       </div>
     </div>
   )
-}
-
-function withoutRemoved(groups: BoardGroup[], removedIds: Set<string>) {
-  if (removedIds.size === 0) return groups
-  return groups.map((group) => ({
-    ...group,
-    sessions: group.sessions.filter((session) => !removedIds.has(session.id)),
-  }))
 }
 
 export default function TeacherWorkspace({
@@ -47,63 +40,56 @@ export default function TeacherWorkspace({
 }) {
   const [groups, setGroups] = useState(incomingGroups)
   const [activeId, setActiveId] = useState(initialActiveId)
+  const [emptyGroupId, setEmptyGroupId] = useState<string | null>(null)
   const [panel, setPanel] = useState<"groups" | "students">("groups")
-  const groupsRef = useRef(groups)
-  const activeRef = useRef(activeId)
-  const removedIds = useRef(new Set<string>())
-  groupsRef.current = groups
-  activeRef.current = activeId
 
   useEffect(() => {
-    setGroups(withoutRemoved(incomingGroups, removedIds.current))
+    setGroups(incomingGroups)
   }, [incomingGroups])
 
   const sessionKey = groups
-    .flatMap((group) => group.sessions.map((session) => session.id))
+    .map((group) => canonicalSession(group.sessions)?.id)
+    .filter(Boolean)
     .join("|")
   const { bundles, remember, prefetch } = useSessionBundles(sessionKey, initialActiveId, initialMessages)
 
   function select(sessionId: string | null) {
     setActiveId(sessionId)
-    activeRef.current = sessionId
+    if (sessionId) setEmptyGroupId(null)
     writeSessionQuery(sessionId)
     if (sessionId) prefetch(sessionId)
   }
 
-  async function remove(sessionId: string) {
-    const snapshot = groupsRef.current
-    const previousActive = activeRef.current
-    removedIds.current.add(sessionId)
-    setGroups((current) =>
-      current.map((group) => ({
-        ...group,
-        sessions: group.sessions.filter((session) => session.id !== sessionId),
-      }))
-    )
-    if (previousActive === sessionId) select(null)
-    const result = await deleteChatSessionNow(sessionId)
-    if (!result.ok) {
-      removedIds.current.delete(sessionId)
-      setGroups(snapshot)
-      if (previousActive === sessionId) select(previousActive)
+  function openGroup(groupId: string) {
+    const group = groups.find((item) => item.id === groupId)
+    const session = group ? canonicalSession(group.sessions) : null
+    if (!session) {
+      setEmptyGroupId(groupId)
+      select(null)
+      return
     }
-    return result
+    setEmptyGroupId(null)
+    select(session.id)
+  }
+
+  function prefetchGroup(groupId: string) {
+    const group = groups.find((item) => item.id === groupId)
+    const session = group ? canonicalSession(group.sessions) : null
+    if (session) prefetch(session.id)
   }
 
   let active: {
     id: string
-    title: string
     groupId: string
     groupName: string
     newintervene: number
   } | null = null
   if (activeId) {
     for (const group of groups) {
-      const found = group.sessions.find((session) => session.id === activeId)
-      if (!found) continue
+      const session = canonicalSession(group.sessions)
+      if (!session || session.id !== activeId) continue
       active = {
-        id: found.id,
-        title: found.title,
+        id: session.id,
         groupId: group.id,
         groupName: group.name,
         newintervene: group.newintervene,
@@ -141,10 +127,9 @@ export default function TeacherWorkspace({
             <TeacherBoard
               groups={groups}
               waiting={waiting}
-              activeSessionId={active?.id || null}
-              onSelectSession={select}
-              onDeleteSession={remove}
-              onPrefetchSession={prefetch}
+              activeGroupId={active?.groupId || emptyGroupId}
+              onSelectGroup={openGroup}
+              onPrefetchGroup={prefetchGroup}
             />
           ) : (
             <StudentAccounts students={students} groups={groups} />
@@ -163,14 +148,17 @@ export default function TeacherWorkspace({
             groupId={active.groupId}
             groupName={active.groupName}
             sessionId={active.id}
-            sessionTitle={active.title}
             newintervene={active.newintervene}
             readOnly
           />
         ) : (
           <EmptySession
-            title="Choose a chat session"
-            body="Open any session under a group to read what the students are writing."
+            title={emptyGroupId ? "No chat yet" : "Choose a group"}
+            body={
+              emptyGroupId
+                ? "This group’s chat appears when a student opens it."
+                : "Open a group to read its chat."
+            }
           />
         )}
       </div>

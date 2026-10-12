@@ -10,17 +10,15 @@ import type { BoardGroup } from "@/lib/classroom"
 export default function TeacherBoard({
   groups,
   waiting,
-  activeSessionId,
-  onSelectSession,
-  onDeleteSession,
-  onPrefetchSession,
+  activeGroupId,
+  onSelectGroup,
+  onPrefetchGroup,
 }: {
   groups: BoardGroup[]
   waiting: { id: string; name: string }[]
-  activeSessionId: string | null
-  onSelectSession: (sessionId: string) => void
-  onDeleteSession: (sessionId: string) => Promise<{ ok: true } | { ok: false; error: string }>
-  onPrefetchSession: (sessionId: string) => void
+  activeGroupId: string | null
+  onSelectGroup: (groupId: string) => void
+  onPrefetchGroup: (groupId: string) => void
 }) {
   const router = useRouter()
   const [name, setName] = useState("")
@@ -87,20 +85,13 @@ export default function TeacherBoard({
     router.refresh()
   }
 
-  async function onDeleteSessionClick(sessionId: string) {
-    if (!window.confirm("Delete this chat session and its messages?")) return
-    setError("")
-    const result = await onDeleteSession(sessionId)
-    if (!result.ok) setError(result.error)
-  }
-
   return (
     <aside className="flex h-full min-h-0 flex-col bg-white">
       <div className="border-b border-slate-100 px-4 py-4">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Teacher</p>
         <h1 className="mt-1 text-xl font-bold tracking-tight text-slate-900">Groups</h1>
         <p className="mt-1 text-xs leading-relaxed text-slate-500">
-          Create groups for students to join, then open any chat session.
+          Create groups for students to join. Each group has one chat.
         </p>
         <form onSubmit={onCreate} className="mt-3 flex gap-2">
           <input
@@ -143,9 +134,24 @@ export default function TeacherBoard({
           const students = group.members.filter((member) => member.role === "student")
           const others = groups.filter((item) => item.id !== group.id)
           return (
-            <section key={group.id} className="rounded-2xl border border-slate-200 p-3">
+            <section
+              key={group.id}
+              className={`rounded-2xl border p-3 ${
+                group.id === activeGroupId ? "border-slate-900" : "border-slate-200"
+              }`}
+            >
               <div className="flex items-start justify-between gap-2">
-                <h2 className="text-base font-bold tracking-tight text-slate-900">{group.name}</h2>
+                <button
+                  type="button"
+                  onPointerEnter={() => onPrefetchGroup(group.id)}
+                  onFocus={() => onPrefetchGroup(group.id)}
+                  onClick={() => onSelectGroup(group.id)}
+                  className={`min-w-0 flex-1 rounded-xl px-2 py-1.5 text-left text-base font-bold tracking-tight transition ${
+                    group.id === activeGroupId ? "bg-slate-900 text-white" : "text-slate-900 hover:bg-slate-50"
+                  }`}
+                >
+                  <span className="block truncate">{group.name}</span>
+                </button>
                 <button
                   type="button"
                   disabled={pending}
@@ -208,40 +214,6 @@ export default function TeacherBoard({
                 </ul>
               </div>
 
-              <div className="mt-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Chat sessions</p>
-                {group.sessions.length === 0 && (
-                  <p className="mt-1 text-xs text-slate-500">Students have not started a session.</p>
-                )}
-                <ul className="mt-2 space-y-1">
-                  {group.sessions.map((session) => {
-                    const active = session.id === activeSessionId
-                    return (
-                      <li key={session.id} className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onPointerEnter={() => onPrefetchSession(session.id)}
-                          onFocus={() => onPrefetchSession(session.id)}
-                          onClick={() => onSelectSession(session.id)}
-                          className={`min-w-0 flex-1 rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${
-                            active ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-50"
-                          }`}
-                        >
-                          <span className="block truncate">{session.title}</span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => onDeleteSessionClick(session.id)}
-                          className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
-                          aria-label={`Delete ${session.title}`}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </li>
-                    )
-                  })}
-                </ul>
-              </div>
             </section>
           )
         })}

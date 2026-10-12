@@ -291,6 +291,9 @@ begin
   values (clean, 1, true)
   returning id into gid;
 
+  insert into public."ConetSessions" (group_id, title)
+  values (gid, clean);
+
   return gid;
 end;
 $$;
@@ -443,6 +446,15 @@ begin
     raise exception 'invalid name';
   end if;
 
+  select id into sid
+  from public."ConetSessions"
+  where group_id = p_group_id
+  order by created_at
+  limit 1;
+  if sid is not null then
+    return sid;
+  end if;
+
   insert into public."ConetSessions" (group_id, title, created_by)
   values (p_group_id, clean, me)
   returning id into sid;
@@ -450,6 +462,13 @@ begin
   return sid;
 end;
 $$;
+
+insert into public."ConetSessions" (group_id, title)
+select g.id, g.name
+from public."ConetGroups" g
+where not exists (
+  select 1 from public."ConetSessions" s where s.group_id = g.id
+);
 
 create or replace function public.conet_delete_session(p_session_id uuid)
 returns void

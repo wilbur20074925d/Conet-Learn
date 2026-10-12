@@ -6,6 +6,7 @@ import JoinGroup from "@/components/join-group"
 import StudentClassroom from "@/components/student-classroom"
 import TeacherWorkspace from "@/components/teacher-workspace"
 import { getSessionContext, getSessionMessages } from "@/lib/actions"
+import { canonicalSession } from "@/lib/canonical-session"
 import { getTeacherBoard, listJoinableGroups } from "@/lib/classroom"
 import { loadStudentClassroom } from "@/lib/student-classroom-data"
 
@@ -57,11 +58,12 @@ export default async function Home({
     } | null = null
     if (isUuid(requested)) {
       for (const group of board.groups) {
-        const found = group.sessions.find((item) => item.id === requested)
-        if (!found) continue
+        if (!group.sessions.some((item) => item.id === requested)) continue
+        const session = canonicalSession(group.sessions)
+        if (!session) continue
         active = {
-          id: found.id,
-          title: found.title,
+          id: session.id,
+          title: group.name,
           groupId: group.id,
           groupName: group.name,
           newintervene: group.newintervene,
@@ -101,7 +103,7 @@ export default async function Home({
     )
   }
 
-  const classroom = await loadStudentClassroom(ctx.groupId, ctx.profileId, requested)
+  const classroom = await loadStudentClassroom(ctx.groupId, ctx.profileId)
   if (!classroom.ok) return <SetupScreen message={classroom.error} />
 
   return (
@@ -110,8 +112,7 @@ export default async function Home({
       name={ctx.name}
       groupId={ctx.groupId}
       groupName={ctx.groupName}
-      sessions={classroom.data.sessions}
-      activeSessionId={classroom.data.activeSessionId}
+      session={classroom.data.session}
       initialMessages={classroom.data.initialMessages}
       currentUserId={ctx.profileId}
       currentUserName={ctx.name}

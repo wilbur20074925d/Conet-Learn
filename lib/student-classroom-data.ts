@@ -1,15 +1,10 @@
 import "server-only"
 
 import { getDocument, getSessionMessages, type GroupMember } from "@/lib/actions"
+import { canonicalSession } from "@/lib/canonical-session"
 import { listGroupSessions, type ChatSession } from "@/lib/classroom"
 import { listCollaborativeNotes, type CollaborativeNote } from "@/lib/collaborative-notes"
 import { createClient } from "@/lib/supabase/server"
-
-function isUuid(value: string | undefined) {
-  return Boolean(
-    value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
-  )
-}
 
 async function listGroupPeers(groupId: string, profileId: string) {
   const supabase = await createClient()
@@ -30,8 +25,7 @@ async function listGroupPeers(groupId: string, profileId: string) {
 }
 
 export type StudentClassroomPayload = {
-  sessions: ChatSession[]
-  activeSessionId: string | null
+  session: ChatSession | null
   initialMessages: Awaited<ReturnType<typeof getSessionMessages>>
   initialNotes: CollaborativeNote[]
   document: string
@@ -40,8 +34,7 @@ export type StudentClassroomPayload = {
 
 export async function loadStudentClassroom(
   groupId: string,
-  profileId: string,
-  requestedSession?: string
+  profileId: string
 ): Promise<{ ok: true; data: StudentClassroomPayload } | { ok: false; error: string }> {
   const [chats, notesResult, document, peers] = await Promise.all([
     listGroupSessions(groupId),
@@ -52,18 +45,14 @@ export async function loadStudentClassroom(
 
   if (!chats.ok) return { ok: false, error: chats.error }
 
-  const active =
-    (isUuid(requestedSession) ? chats.sessions.find((item) => item.id === requestedSession) : undefined) ||
-    chats.sessions[0] ||
-    null
+  const active = canonicalSession(chats.sessions)
 
   const initialMessages = active ? await getSessionMessages(active.id) : []
 
   return {
     ok: true,
     data: {
-      sessions: chats.sessions,
-      activeSessionId: active?.id || null,
+      session: active,
       initialMessages,
       initialNotes: notesResult.ok ? notesResult.notes : [],
       document,

@@ -1479,6 +1479,7 @@ export const CollaborativeNoteEditor: React.FC<CollaborativeNoteEditorProps> = (
 
   const editor = useEditor(
     {
+      immediatelyRender: false,
       extensions,
       editable,
       editorProps: {

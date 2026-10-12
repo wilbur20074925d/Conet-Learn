@@ -22,11 +22,7 @@ function SetupScreen({ message }: { message: string }) {
   )
 }
 
-export default async function InClassSessionPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ session?: string | string[] }>
-}) {
+export default async function InClassSessionPage() {
   const session = await getSessionContext()
   if (!session.ok) {
     if (session.error === "Unauthorized") redirect("/login")
@@ -48,9 +44,7 @@ export default async function InClassSessionPage({
     )
   }
 
-  const params = await searchParams
-  const requested = Array.isArray(params.session) ? params.session[0] : params.session
-  const classroom = await loadStudentClassroom(ctx.groupId, ctx.profileId, requested)
+  const classroom = await loadStudentClassroom(ctx.groupId, ctx.profileId)
   if (!classroom.ok) return <SetupScreen message={classroom.error} />
 
   return (
@@ -59,8 +53,7 @@ export default async function InClassSessionPage({
       name={ctx.name}
       groupId={ctx.groupId}
       groupName={ctx.groupName}
-      sessions={classroom.data.sessions}
-      activeSessionId={classroom.data.activeSessionId}
+      session={classroom.data.session}
       initialMessages={classroom.data.initialMessages}
       currentUserId={ctx.profileId}
       currentUserName={ctx.name}

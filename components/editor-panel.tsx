@@ -17,10 +17,51 @@ interface GroupMember {
 interface StructuredContent {
   part1_concept1: string
   part1_concept2: string
+  savedAt?: string
 }
 
 function wordCount(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length
+}
+
+function localKey(groupId: string) {
+  return `conet-in-class-essay:${groupId}`
+}
+
+function toPayload(next: StructuredContent) {
+  return JSON.stringify({
+    field1: next.part1_concept1 || "",
+    field2: next.part1_concept2 || "",
+    part1_concept1: next.part1_concept1 || "",
+    part1_concept2: next.part1_concept2 || "",
+    savedAt: next.savedAt || new Date().toISOString(),
+  })
+}
+
+function parseContent(raw: string | null | undefined): StructuredContent | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Record<string, string>
+    if (!parsed || typeof parsed !== "object") return null
+    return {
+      part1_concept1: parsed.part1_concept1 || parsed.field1 || "",
+      part1_concept2: parsed.part1_concept2 || parsed.field2 || "",
+      savedAt: parsed.savedAt || "",
+    }
+  } catch {
+    return { part1_concept1: raw, part1_concept2: "", savedAt: "" }
+  }
+}
+
+function preferNewer(server: StructuredContent | null, local: StructuredContent | null): StructuredContent {
+  const empty: StructuredContent = { part1_concept1: "", part1_concept2: "" }
+  if (!local) return server || empty
+  if (!server) return local
+  const serverStamp = Date.parse(server.savedAt || "") || 0
+  const localStamp = Date.parse(local.savedAt || "") || 0
+  if (localStamp && serverStamp) return localStamp >= serverStamp ? local : server
+  if (localStamp && !serverStamp && (local.part1_concept1 || local.part1_concept2)) return local
+  return server
 }
 
 export default function EditorPanel({
@@ -42,45 +83,73 @@ export default function EditorPanel({
   const [submitStatus, setSubmitStatus] = useState<"idle" | "success" | "error">("idle")
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hydrated = useRef(false)
+  const latestRef = useRef(structuredContent)
+  latestRef.current = structuredContent
 
   useEffect(() => {
     if (hydrated.current) return
     hydrated.current = true
-    if (!initialContent) return
+    let local: StructuredContent | null = null
     try {
-      const parsed = JSON.parse(initialContent) as Record<string, string>
-      if (parsed && typeof parsed === "object") {
-        setStructuredContent({
-          part1_concept1: parsed.part1_concept1 || parsed.field1 || "",
-          part1_concept2: parsed.part1_concept2 || parsed.field2 || "",
-        })
-        return
-      }
+      local = parseContent(window.localStorage.getItem(localKey(groupId)))
     } catch {
-      setStructuredContent({ part1_concept1: initialContent, part1_concept2: "" })
+      local = null
     }
-  }, [initialContent])
+    const next = preferNewer(parseContent(initialContent), local)
+    setStructuredContent(next)
+  }, [initialContent, groupId])
+
+  async function persistNow(next: StructuredContent) {
+    const stamped = { ...next, savedAt: new Date().toISOString() }
+    const payload = toPayload(stamped)
+    try {
+      window.localStorage.setItem(localKey(groupId), payload)
+    } catch {
+      // Private mode or a full disk should not block the Supabase save.
+    }
+    const result = await saveDocumentSnapshot(payload, groupId)
+    if (result?.success) {
+      setSaveStatus("saved")
+      setHasUnsavedChanges(false)
+    } else {
+      setSaveStatus("error")
+    }
+  }
 
   function debouncedSnapshotSave(next: StructuredContent) {
+    const stamped = { ...next, savedAt: new Date().toISOString() }
     setHasUnsavedChanges(true)
     setSaveStatus("saving")
+    try {
+      window.localStorage.setItem(localKey(groupId), toPayload(stamped))
+    } catch {
+      // Local copy is best-effort; Supabase still saves on the debounce.
+    }
     if (timerRef.current) clearTimeout(timerRef.current)
-    timerRef.current = setTimeout(async () => {
-      const payload = JSON.stringify({
-        field1: next.part1_concept1 || "",
-        field2: next.part1_concept2 || "",
-        part1_concept1: next.part1_concept1 || "",
-        part1_concept2: next.part1_concept2 || "",
-      })
-      const result = await saveDocumentSnapshot(payload, groupId)
-      if (result?.success) {
-        setSaveStatus("saved")
-        setHasUnsavedChanges(false)
-      } else {
-        setSaveStatus("error")
-      }
-    }, 2000)
+    timerRef.current = setTimeout(() => {
+      void persistNow(stamped)
+    }, 800)
   }
+
+  useEffect(() => {
+    const flush = () => {
+      if (!hydrated.current) return
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+        void persistNow(latestRef.current)
+      }
+    }
+    const onHide = () => {
+      if (document.visibilityState === "hidden") flush()
+    }
+    window.addEventListener("pagehide", flush)
+    document.addEventListener("visibilitychange", onHide)
+    return () => {
+      window.removeEventListener("pagehide", flush)
+      document.removeEventListener("visibilitychange", onHide)
+    }
+  }, [groupId])
 
   function updateField(field: keyof StructuredContent, value: string) {
     setStructuredContent((prev) => {
@@ -101,14 +170,9 @@ export default function EditorPanel({
     setSubmitStatus("idle")
     if (timerRef.current) {
       clearTimeout(timerRef.current)
-      const payload = JSON.stringify({
-        field1: structuredContent.part1_concept1 || "",
-        field2: structuredContent.part1_concept2 || "",
-        part1_concept1: structuredContent.part1_concept1 || "",
-        part1_concept2: structuredContent.part1_concept2 || "",
-      })
-      await saveDocumentSnapshot(payload, groupId)
+      timerRef.current = null
     }
+    await persistNow(structuredContent)
     const result = await submitFinalDocument(groupId)
     setSubmitStatus(result.error ? "error" : "success")
     setIsSubmitting(false)

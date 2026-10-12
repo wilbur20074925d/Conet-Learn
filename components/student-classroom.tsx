@@ -28,8 +28,7 @@ export default function StudentClassroom({
   name,
   groupId,
   groupName,
-  sessions,
-  activeSessionId,
+  session,
   initialMessages,
   currentUserId,
   currentUserName,
@@ -42,8 +41,7 @@ export default function StudentClassroom({
   name: string
   groupId: string
   groupName: string
-  sessions: ChatSession[]
-  activeSessionId: string | null
+  session: ChatSession | null
   initialMessages: Message[]
   currentUserId: string
   currentUserName: string
@@ -81,8 +79,7 @@ export default function StudentClassroom({
         mode={mode}
         groupId={groupId}
         groupName={groupName}
-        sessions={sessions}
-        activeSessionId={activeSessionId}
+        session={session}
         initialMessages={initialMessages}
         currentUserId={currentUserId}
         currentUserName={currentUserName}

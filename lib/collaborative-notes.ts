@@ -45,6 +45,17 @@ export async function listCollaborativeNotes(groupId: string) {
   return { ok: true as const, notes: (data || []) as CollaborativeNote[] }
 }
 
+/** One shared document per group. Reuses the earliest session so everyone lands in the same room. */
+export async function ensureCollaborativeNote(groupId: string) {
+  const listed = await listCollaborativeNotes(groupId)
+  if (!listed.ok) return { ok: false as const, error: listed.error }
+  if (listed.notes.length > 0) {
+    const canonical = [...listed.notes].sort((a, b) => a.created_at.localeCompare(b.created_at))[0]
+    return { ok: true as const, note: canonical }
+  }
+  return createCollaborativeNote(groupId, "Group document")
+}
+
 export async function createCollaborativeNote(groupId: string, title: string) {
   const auth = await requireGroupMember(groupId)
   if (!auth.ok) return { ok: false as const, error: auth.error }

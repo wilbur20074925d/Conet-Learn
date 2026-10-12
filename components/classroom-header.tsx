@@ -7,11 +7,6 @@ import type { StudentWorkspaceMode } from "@/components/student-workspace"
 import { logout } from "@/lib/auth.actions"
 import { cn } from "@/lib/utils"
 
-const PRE_TEST =
-  "https://docs.google.com/forms/d/e/1FAIpQLSd7K9E5F6Zc9Q-7_D7hUbq9Tw9F0tvBxXO-8p987neg2futgA/viewform?usp=header"
-const POST_TEST =
-  "https://docs.google.com/forms/d/e/1FAIpQLSc2ZBYWpaFGkSBQHkdKyLcLLQJrK8ogomjcN185vna6TJEnZg/viewform?usp=publish-editor"
-
 export default function ClassroomHeader({
   name,
   role,
@@ -54,8 +49,10 @@ export default function ClassroomHeader({
             )}
           </div>
 
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
           {showWorkspaceNav && onWorkspaceModeChange && (
-            <nav className="ml-1 flex items-center rounded-xl border border-slate-200 bg-slate-50 p-1">
+            <nav className="flex items-center rounded-xl border border-slate-200 bg-slate-50 p-1">
               <button
                 type="button"
                 onClick={() => onWorkspaceModeChange("in-class")}
@@ -66,7 +63,7 @@ export default function ClassroomHeader({
                     : "text-slate-600 hover:bg-white hover:text-slate-900"
                 )}
               >
-                In-class session
+                Individual Note
               </button>
               <button
                 type="button"
@@ -78,28 +75,10 @@ export default function ClassroomHeader({
                     : "text-slate-600 hover:bg-white hover:text-slate-900"
                 )}
               >
-                Group project
+                Group Post
               </button>
             </nav>
           )}
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <a
-            href={PRE_TEST}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-200"
-          >
-            Pre test
-          </a>
-          <a
-            href={POST_TEST}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-200"
-          >
-            Post test
-          </a>
           <form action={logout}>
             <Button
               type="submit"

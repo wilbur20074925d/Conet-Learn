@@ -1,6 +1,6 @@
 /** Host only (wss://host). Also repairs the `railway.appa` concatenation typo. */
 export function normalizeYjsWsOrigin(raw: string): string {
-  let value = (raw || "").trim() || "ws://localhost:1234"
+  let value = (raw || "").trim() || "wss://conet-learn-production.up.railway.app"
   value = value.replace(/railway\.appa\b/gi, "railway.app")
   value = value.replace(/^http:\/\//i, "ws://").replace(/^https:\/\//i, "wss://")
   try {
@@ -9,7 +9,7 @@ export function normalizeYjsWsOrigin(raw: string): string {
     const host = parsed.host.replace(/railway\.appa$/i, "railway.app")
     return `${protocol}//${host}`
   } catch {
-    return "ws://localhost:1234"
+    return "wss://conet-learn-production.up.railway.app"
   }
 }
 
@@ -17,5 +17,5 @@ export function getYjsWsUrl(): string {
   if (typeof process !== "undefined" && process.env.NEXT_PUBLIC_YJS_WS_URL) {
     return process.env.NEXT_PUBLIC_YJS_WS_URL
   }
-  return "ws://localhost:1234"
+  return "wss://conet-learn-production.up.railway.app"
 }

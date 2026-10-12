@@ -452,7 +452,6 @@ export default function ChatPanel({
   groupId,
   groupName,
   sessionId,
-  sessionTitle,
   newintervene,
   readOnly = false,
   awaitInitial = false,
@@ -464,7 +463,6 @@ export default function ChatPanel({
   groupId: string
   groupName: string
   sessionId: string
-  sessionTitle: string
   newintervene: number
   readOnly?: boolean
   awaitInitial?: boolean
@@ -936,7 +934,7 @@ export default function ChatPanel({
       <header className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="shrink-0">
           <div className="flex items-center gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{groupName}</p>
+            <h2 className="text-xl font-bold tracking-tight text-slate-900">{groupName}</h2>
             <span
               className={`inline-flex items-center gap-1 text-[11px] font-semibold ${
                 linkStatus === "live" ? "text-brand-green" : "text-amber-600"
@@ -950,12 +948,11 @@ export default function ChatPanel({
               {linkStatus === "live" ? "Live" : "Reconnecting"}
             </span>
           </div>
-          <h2 className="text-xl font-bold tracking-tight text-slate-900">{sessionTitle}</h2>
           <p className="text-xs text-slate-500">{visibleMessages.length} messages</p>
         </div>
         <div className="flex min-w-0 flex-1 flex-col items-start gap-1.5 sm:items-end">
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-            {online.length} in this session
+            {online.length} online
           </p>
           <div className="flex max-h-24 w-full flex-wrap gap-1.5 overflow-y-auto sm:justify-end">
             {online.length === 0 && (
@@ -992,7 +989,7 @@ export default function ChatPanel({
           {messagesLoaded && visibleMessages.length === 0 && (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
               <p className="text-lg font-bold tracking-tight text-slate-900">
-                {pendingSession ? "Starting your session…" : "This session is empty."}
+                {pendingSession ? "Opening the group chat…" : "No messages yet."}
               </p>
             </div>
           )}
@@ -1062,9 +1059,9 @@ export default function ChatPanel({
 
       <footer className="border-t border-slate-100 bg-white px-5 py-4">
         {readOnly ? (
-          <p className="text-sm text-slate-500">You are viewing this session. Students write the messages here.</p>
+          <p className="text-sm text-slate-500">You are viewing this chat. Students write the messages here.</p>
         ) : pendingSession ? (
-          <p className="text-sm text-slate-500">Setting up this session…</p>
+          <p className="text-sm text-slate-500">Opening the group chat…</p>
         ) : (
           <ChatInputForm
             currentUserId={currentUserId}

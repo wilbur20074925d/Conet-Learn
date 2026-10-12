@@ -1,6 +1,9 @@
 "use client"
 
+import { canonicalSession } from "@/lib/canonical-session"
 import { createClient } from "@/lib/supabase/browser"
+
+export { canonicalSession }
 
 type NewSession = {
   id: string

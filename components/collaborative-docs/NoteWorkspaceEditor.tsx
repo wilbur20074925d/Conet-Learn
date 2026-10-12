@@ -5,10 +5,14 @@
  * Ported from StreamLearn-pro NoteWorkspaceEditor for Co-net Learn.
  */
 
-import { useCallback, useEffect, useRef } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import type { Editor } from "@tiptap/react"
 import { Clock, Wifi, WifiOff } from "lucide-react"
 import { CollaborativeNoteEditor } from "@/components/collaborative-docs/CollaborativeNoteEditor"
+import {
+  DocumentSessionLoader,
+  type LoadStage,
+} from "@/components/collaborative-docs/DocumentSessionLoader"
 import { useYjsNoteCollaboration } from "@/hooks/useYjsNoteCollaboration"
 import type { CollaborativeNote } from "@/lib/collaborative-notes"
 import { getYjsWsUrl } from "@/lib/yjs/normalizeYjsWsOrigin"
@@ -16,9 +20,11 @@ import {
   collapseRepeatedTitle,
   getMetaMap,
   parseStoredNote,
-  previewFromStoredContent,
   serializeNoteDocForStorage,
 } from "@/lib/yjs/yjsNoteSchema"
+
+const MIN_LOAD_MS = 900
+const MAX_LOAD_MS = 10_000
 
 export interface NoteActivityEvent {
   eventType: string
@@ -69,6 +75,9 @@ export function NoteWorkspaceEditor({
     seedHtml: seed.html || note.content || "",
   })
 
+  const [loadStage, setLoadStage] = useState<LoadStage>("finding")
+  const [sessionReady, setSessionReady] = useState(false)
+  const loadStartedAt = useRef(Date.now())
   const htmlTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<Editor | null>(null)
   const lastEditLogAt = useRef(0)
@@ -80,6 +89,36 @@ export function NoteWorkspaceEditor({
   const handleEditorReady = useCallback((ed: Editor) => {
     editorRef.current = ed
   }, [])
+
+  useEffect(() => {
+    loadStartedAt.current = Date.now()
+    setSessionReady(false)
+    setLoadStage("finding")
+    const timer = window.setTimeout(() => setLoadStage("opening"), 220)
+    return () => window.clearTimeout(timer)
+  }, [note.id])
+
+  useEffect(() => {
+    if (ydoc && fragment && awareness) {
+      setLoadStage((stage) => (stage === "finding" || stage === "opening" ? "joining" : stage))
+    }
+  }, [ydoc, fragment, awareness])
+
+  useEffect(() => {
+    if (isConnected) setLoadStage("connecting")
+  }, [isConnected])
+
+  useEffect(() => {
+    if (!isSynced || !ydoc || !awareness) return
+    const wait = Math.max(0, MIN_LOAD_MS - (Date.now() - loadStartedAt.current))
+    const timer = window.setTimeout(() => setSessionReady(true), wait)
+    return () => window.clearTimeout(timer)
+  }, [isSynced, ydoc, awareness])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSessionReady(true), MAX_LOAD_MS)
+    return () => window.clearTimeout(timer)
+  }, [note.id])
 
   const logEditSession = useCallback(() => {
     const now = Date.now()
@@ -154,6 +193,16 @@ export function NoteWorkspaceEditor({
     }
   }
 
+  if (!sessionReady || !ydoc || !fragment || !awareness) {
+    return (
+      <DocumentSessionLoader
+        stage={loadStage}
+        sessionTitle={displayTitle || note.title || "Group document"}
+        userName={currentUser.name || "you"}
+      />
+    )
+  }
+
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -163,7 +212,8 @@ export function NoteWorkspaceEditor({
             value={displayTitle}
             onChange={(e) => handleTitleChange(e.target.value)}
             className="min-w-[12rem] flex-1 bg-transparent text-2xl font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none"
-            placeholder="Title"
+            placeholder="Session name"
+            aria-label="Session name"
           />
         )}
         <div className="flex items-center gap-2">
@@ -203,32 +253,20 @@ export function NoteWorkspaceEditor({
         </div>
       </div>
 
-      {ydoc && fragment && awareness ? (
-        <CollaborativeNoteEditor
-          ydoc={ydoc}
-          fragment={fragment}
-          awareness={awareness}
-          user={{
-            name: currentUser.name || "User",
-            color: userColor,
-          }}
-          documentTitle={displayTitle}
-          seedHtml={seedHtmlOnce || undefined}
-          onSeedConsumed={consumeSeedHtml}
-          onEditorReady={handleEditorReady}
-          minHeight={minHeight}
-        />
-      ) : (
-        <div
-          className="flex items-center justify-center rounded-lg border border-slate-200 bg-white text-sm text-slate-500"
-          style={{ minHeight }}
-        >
-          Connecting live editor…
-          {note.content ? (
-            <span className="sr-only">{previewFromStoredContent(note.content)}</span>
-          ) : null}
-        </div>
-      )}
+      <CollaborativeNoteEditor
+        ydoc={ydoc}
+        fragment={fragment}
+        awareness={awareness}
+        user={{
+          name: currentUser.name || "User",
+          color: userColor,
+        }}
+        documentTitle={displayTitle}
+        seedHtml={seedHtmlOnce || undefined}
+        onSeedConsumed={consumeSeedHtml}
+        onEditorReady={handleEditorReady}
+        minHeight={minHeight}
+      />
     </div>
   )
 }
