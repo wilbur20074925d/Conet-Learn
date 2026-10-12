@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
 import { ensureRequestId } from "./lib/logger"
+import { supabasePublishableKey, supabaseUrl } from "./lib/supabase/env"
 
 export async function middleware(request: NextRequest) {
   const rid = ensureRequestId(request.headers.get("x-request-id"))
@@ -8,8 +9,8 @@ export async function middleware(request: NextRequest) {
   response.headers.set("x-request-id", rid)
 
   const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    supabaseUrl(),
+    supabasePublishableKey(),
     {
       cookies: {
         getAll() {

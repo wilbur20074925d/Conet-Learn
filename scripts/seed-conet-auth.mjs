@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js"
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/[\r\n]/g, "").trim()
+const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY?.replace(/[\r\n]/g, "").trim()
 
 if (!url || !key) {
   console.error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY")
