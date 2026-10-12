@@ -9,7 +9,7 @@ import { finishNateReply, type Message } from "@/lib/actions"
 import { mapMessageRows, type RawMessage } from "@/lib/map-messages"
 import { NATE_THINKING, NATE_USER_ID } from "@/lib/nate"
 import {
-  fetchGroupMessages,
+  fetchSessionMessages,
   fetchMessageById,
   fetchSessionUsers,
   isTempMessageId,
@@ -24,6 +24,7 @@ import { BookOpen, Check, Copy, Reply, SendHorizonal, X } from "lucide-react"
 
 const ChatInputForm = memo(function ChatInputForm({
   groupId,
+  sessionId,
   currentUserId,
   currentUserName,
   replyingTo,
@@ -35,6 +36,7 @@ const ChatInputForm = memo(function ChatInputForm({
   onThinking,
 }: {
   groupId: string
+  sessionId: string
   currentUserId: string
   currentUserName: string
   replyingTo: Message | null
@@ -86,6 +88,7 @@ const ChatInputForm = memo(function ChatInputForm({
       try {
         const result = await sendGroupMessage(createClient(), {
           groupId,
+          sessionId,
           userId: currentUserId,
           content,
           replyTo: reply && !isTempMessageId(reply.id) ? reply.id : null,
@@ -327,7 +330,7 @@ function NateReplyCard({
   createdAt: string
   quote: { user_name: string; content: string } | null
   reveal: boolean
-  onReply: () => void
+  onReply?: () => void
 }) {
   const [shown, setShown] = useState(reveal ? "" : content)
   const [typing, setTyping] = useState(reveal)
@@ -398,7 +401,7 @@ function NateReplyCard({
         </div>
         <div className="flex items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/80 px-3 py-1.5">
           <BubbleTime value={createdAt} />
-          {!typing && (
+          {!typing && onReply && (
             <button
               type="button"
               onClick={onReply}
@@ -432,14 +435,20 @@ export default function ChatPanel({
   currentUserName,
   groupId,
   groupName,
+  sessionId,
+  sessionTitle,
   newintervene,
+  readOnly = false,
 }: {
   initialMessages: Message[]
   currentUserId: string
   currentUserName: string
   groupId: string
   groupName: string
+  sessionId: string
+  sessionTitle: string
   newintervene: number
+  readOnly?: boolean
 }) {
   const [messages, setMessages] = useState(initialMessages)
   const [replyingTo, setReplyingTo] = useState<Message | null>(null)
@@ -485,9 +494,9 @@ export default function ChatPanel({
           },
         ]
       })
-      void finishNateReply(groupId, thinkingId)
+      void finishNateReply(groupId, sessionId, thinkingId)
     },
-    [groupId]
+    [groupId, sessionId]
   )
 
   useEffect(() => {
@@ -506,7 +515,7 @@ export default function ChatPanel({
 
     const applyIncoming = async (messageId: string | undefined) => {
       if (!messageId) {
-        const latest = await fetchGroupMessages(supabase, groupId)
+        const latest = await fetchSessionMessages(supabase, sessionId)
         if (!stopped && latest) {
           setMessages((prev) => {
             const temps = prev.filter((message) => isTempMessageId(message.id))
@@ -528,32 +537,32 @@ export default function ChatPanel({
     }
 
     const beat = async () => {
-      await touchPresence(supabase, groupId, currentUserId)
+      if (!readOnly) await touchPresence(supabase, groupId, currentUserId)
       if (!roomReady) await refreshPresence()
     }
 
-    const room = supabase.channel(`conet-room-${groupId}`, {
+    const room = supabase.channel(`conet-room-${sessionId}`, {
       config: { presence: { key: currentUserId } },
     })
 
     room
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "ConetMessages", filter: `group_id=eq.${groupId}` },
+        { event: "INSERT", schema: "public", table: "ConetMessages", filter: `session_id=eq.${sessionId}` },
         (payload) => {
           void applyIncoming((payload.new as { id?: string }).id)
         }
       )
       .on(
         "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "ConetMessages", filter: `group_id=eq.${groupId}` },
+        { event: "UPDATE", schema: "public", table: "ConetMessages", filter: `session_id=eq.${sessionId}` },
         (payload) => {
           void applyIncoming((payload.new as { id?: string }).id)
         }
       )
       .on(
         "postgres_changes",
-        { event: "DELETE", schema: "public", table: "ConetMessages", filter: `group_id=eq.${groupId}` },
+        { event: "DELETE", schema: "public", table: "ConetMessages", filter: `session_id=eq.${sessionId}` },
         (payload) => {
           const id = (payload.old as { id?: string }).id
           if (!id) return
@@ -576,7 +585,11 @@ export default function ChatPanel({
       })
       .subscribe((status) => {
         if (status !== "SUBSCRIBED" || stopped) return
-        void room.track({ name: currentUserName, seminar: "CoNet Seminar" }).then(() => beat())
+        if (readOnly) {
+          void refreshPresence()
+          return
+        }
+        void room.track({ name: currentUserName, seminar: groupName }).then(() => beat())
       })
 
     const presenceTable = supabase
@@ -597,7 +610,7 @@ export default function ChatPanel({
       void beat()
     }, 12000)
     const reconcile = setInterval(() => {
-      void fetchGroupMessages(supabase, groupId).then((latest) => {
+      void fetchSessionMessages(supabase, sessionId).then((latest) => {
         if (stopped || !latest) return
         setMessages((prev) => {
           const temps = prev.filter((message) => isTempMessageId(message.id))
@@ -625,7 +638,7 @@ export default function ChatPanel({
       supabase.removeChannel(room)
       supabase.removeChannel(presenceTable)
     }
-  }, [groupId, currentUserId, currentUserName])
+  }, [groupId, groupName, sessionId, currentUserId, currentUserName, readOnly])
 
   const visibleMessages = useMemo(() => {
     return messages.filter((message) => {
@@ -643,7 +656,9 @@ export default function ChatPanel({
   const rosterSource = presenceReady && liveUsers.length > 0 ? liveUsers : dbUsers
   const online = (rosterSource.length > 0
     ? rosterSource
-    : [{ id: currentUserId, name: currentUserName, lastSeen: Date.now() }]
+    : readOnly
+      ? []
+      : [{ id: currentUserId, name: currentUserName, lastSeen: Date.now() }]
   )
     .slice()
     .sort((a, b) => {
@@ -657,13 +672,13 @@ export default function ChatPanel({
       <header className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="shrink-0">
           <div className="flex items-center gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Discussion</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{groupName}</p>
             <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-green">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-green" />
               Live
             </span>
           </div>
-          <h2 className="text-xl font-bold tracking-tight text-slate-900">{groupName}</h2>
+          <h2 className="text-xl font-bold tracking-tight text-slate-900">{sessionTitle}</h2>
           <p className="text-xs text-slate-500">{visibleMessages.length} messages</p>
         </div>
         <div className="flex min-w-0 flex-1 flex-col items-start gap-1.5 sm:items-end">
@@ -694,10 +709,7 @@ export default function ChatPanel({
         <div className="space-y-4 px-5 py-5">
           {visibleMessages.length === 0 && (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
-              <p className="text-lg font-bold tracking-tight text-slate-900">The table is open.</p>
-              <p className="mt-1 text-sm text-slate-500">
-                Share a claim, a doubt, or a piece of evidence. Mention @NATE when you want the group&apos;s AI partner to join.
-              </p>
+              <p className="text-lg font-bold tracking-tight text-slate-900">This session is empty.</p>
             </div>
           )}
           {visibleMessages.map((msg) => {
@@ -713,9 +725,9 @@ export default function ChatPanel({
                   key={msg.id}
                   content={msg.content}
                   createdAt={msg.created_at}
-                  quote={msg.original_message}
+                  quote={msg.original_message ?? null}
                   reveal={revealIds.current.has(msg.id)}
-                  onReply={() => setReplyingTo(msg)}
+                  onReply={readOnly ? undefined : () => setReplyingTo(msg)}
                 />
               )
             }
@@ -743,7 +755,7 @@ export default function ChatPanel({
                       <p className={`text-[11px] font-medium ${mine ? "text-white/70" : "text-slate-400"}`}>
                         {msg.name}
                       </p>
-                      {!mine && (
+                      {!readOnly && !mine && (
                         <button
                           type="button"
                           onClick={() => setReplyingTo(msg)}
@@ -764,18 +776,23 @@ export default function ChatPanel({
       </ScrollArea>
 
       <footer className="border-t border-slate-100 bg-white px-5 py-4">
-        <ChatInputForm
-          groupId={groupId}
-          currentUserId={currentUserId}
-          currentUserName={currentUserName}
-          replyingTo={replyingTo}
-          onCancelReply={cancelReply}
-          newintervene={newintervene}
-          onOptimisticSend={handleOptimisticSend}
-          onSendConfirmed={handleSendConfirmed}
-          onSendFailed={handleSendFailed}
-          onThinking={handleThinking}
-        />
+        {readOnly ? (
+          <p className="text-sm text-slate-500">You are viewing this session. Students write the messages here.</p>
+        ) : (
+          <ChatInputForm
+            groupId={groupId}
+            sessionId={sessionId}
+            currentUserId={currentUserId}
+            currentUserName={currentUserName}
+            replyingTo={replyingTo}
+            onCancelReply={cancelReply}
+            newintervene={newintervene}
+            onOptimisticSend={handleOptimisticSend}
+            onSendConfirmed={handleSendConfirmed}
+            onSendFailed={handleSendFailed}
+            onThinking={handleThinking}
+          />
+        )}
       </footer>
     </section>
   )

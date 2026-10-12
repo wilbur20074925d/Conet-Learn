@@ -1,37 +1,141 @@
 import { redirect } from "next/navigation"
-import { LogOut } from "lucide-react"
 import BrandLogo from "@/components/brand-logo"
 import ChatPanel from "@/components/chat-panel"
-import EditorPanel from "@/components/editor-panel"
+import ClassroomHeader from "@/components/classroom-header"
 import ConsentWrapper from "@/components/consent-wrapper"
-import NateModeSwitch from "@/components/nate-mode-switch"
-import { getDocument, getMessages, getSessionContext } from "@/lib/actions"
-import { logout } from "@/lib/auth.actions"
-import { Button } from "@/components/ui/button"
+import EditorPanel from "@/components/editor-panel"
+import JoinGroup from "@/components/join-group"
+import SessionRail from "@/components/session-rail"
+import TeacherBoard from "@/components/teacher-board"
+import { getDocument, getSessionContext, getSessionMessages } from "@/lib/actions"
+import { getTeacherBoard, listGroupSessions, listJoinableGroups } from "@/lib/classroom"
 
 export const dynamic = "force-dynamic"
 
-const PRE_TEST = "https://docs.google.com/forms/d/e/1FAIpQLSd7K9E5F6Zc9Q-7_D7hUbq9Tw9F0tvBxXO-8p987neg2futgA/viewform?usp=header"
-const POST_TEST = "https://docs.google.com/forms/d/e/1FAIpQLSc2ZBYWpaFGkSBQHkdKyLcLLQJrK8ogomjcN185vna6TJEnZg/viewform?usp=publish-editor"
+function isUuid(value: string | undefined) {
+  return Boolean(
+    value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+  )
+}
 
-export default async function Home() {
+function SetupScreen({ message }: { message: string }) {
+  return (
+    <main className="conet-page-bg flex min-h-screen items-center justify-center px-6">
+      <div className="conet-surface max-w-lg p-8 text-center">
+        <BrandLogo className="mx-auto h-auto w-full max-w-[220px]" />
+        <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">Almost ready</h1>
+        <p className="mt-3 text-sm leading-relaxed text-slate-500">{message}</p>
+      </div>
+    </main>
+  )
+}
+
+function EmptySession({ title, body }: { title: string; body: string }) {
+  return (
+    <div className="flex h-full items-center justify-center px-8 text-center">
+      <div>
+        <p className="text-lg font-bold tracking-tight text-slate-900">{title}</p>
+        <p className="mt-2 text-sm leading-relaxed text-slate-500">{body}</p>
+      </div>
+    </div>
+  )
+}
+
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<{ session?: string | string[] }>
+}) {
   const session = await getSessionContext()
   if (!session.ok) {
     if (session.error === "Unauthorized") redirect("/login")
+    return <SetupScreen message={session.error} />
+  }
+
+  const params = await searchParams
+  const requested = Array.isArray(params.session) ? params.session[0] : params.session
+  const { ctx, members } = session
+
+  if (ctx.role === "teacher") {
+    const board = await getTeacherBoard()
+    if (!board.ok) return <SetupScreen message={board.error} />
+
+    let active: {
+      id: string
+      title: string
+      groupId: string
+      groupName: string
+      newintervene: number
+    } | null = null
+    if (isUuid(requested)) {
+      for (const group of board.groups) {
+        const found = group.sessions.find((item) => item.id === requested)
+        if (!found) continue
+        active = {
+          id: found.id,
+          title: found.title,
+          groupId: group.id,
+          groupName: group.name,
+          newintervene: group.newintervene,
+        }
+        break
+      }
+    }
+
     return (
-      <main className="conet-page-bg flex min-h-screen items-center justify-center px-6">
-        <div className="conet-surface max-w-lg p-8 text-center">
-          <BrandLogo className="mx-auto h-auto w-full max-w-[220px]" />
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">Almost ready</h1>
-          <p className="mt-3 text-sm leading-relaxed text-slate-500">{session.error}</p>
+      <div className="conet-page-bg flex h-dvh flex-col overflow-hidden text-slate-900">
+        <ConsentWrapper userId={ctx.profileId} />
+        <ClassroomHeader name={ctx.name} role={ctx.role} />
+        <div className="grid min-h-0 flex-1 gap-3 overflow-hidden p-3 lg:grid-cols-[22rem_minmax(0,1fr)]">
+          <div className="conet-surface min-h-0 overflow-hidden">
+            <TeacherBoard groups={board.groups} waiting={board.waiting} activeSessionId={active?.id || null} />
+          </div>
+          <div className="conet-surface min-h-0 overflow-hidden">
+            {active ? (
+              <ChatPanel
+                key={active.id}
+                initialMessages={await getSessionMessages(active.id)}
+                currentUserId={ctx.profileId}
+                groupId={active.groupId}
+                groupName={active.groupName}
+                sessionId={active.id}
+                sessionTitle={active.title}
+                currentUserName={ctx.name}
+                newintervene={active.newintervene}
+                readOnly
+              />
+            ) : (
+              <EmptySession
+                title="Choose a chat session"
+                body="Open any session under a group to read what the students are writing."
+              />
+            )}
+          </div>
         </div>
-      </main>
+      </div>
     )
   }
 
-  const { ctx, members } = session
+  if (!ctx.groupId || !ctx.groupName) {
+    const directory = await listJoinableGroups()
+    if (!directory.ok) return <SetupScreen message={directory.error} />
+    return (
+      <div className="conet-page-bg flex min-h-dvh flex-col text-slate-900">
+        <ConsentWrapper userId={ctx.profileId} />
+        <ClassroomHeader name={ctx.name} role="student" />
+        <JoinGroup groups={directory.groups} />
+      </div>
+    )
+  }
+
+  const chats = await listGroupSessions(ctx.groupId)
+  if (!chats.ok) return <SetupScreen message={chats.error} />
+  const active =
+    (isUuid(requested) ? chats.sessions.find((item) => item.id === requested) : undefined) ||
+    chats.sessions[0] ||
+    null
   const [messages, document] = await Promise.all([
-    getMessages(ctx.groupId),
+    active ? getSessionMessages(active.id) : Promise.resolve([]),
     getDocument(ctx.groupId, ctx.profileId),
   ])
   const peers = members.filter((member) => member.id !== ctx.profileId && member.role !== "ai")
@@ -39,65 +143,38 @@ export default async function Home() {
   return (
     <div className="conet-page-bg flex h-dvh flex-col overflow-hidden text-slate-900">
       <ConsentWrapper userId={ctx.profileId} />
-      <header className="border-b border-slate-200/80 bg-white/80 backdrop-blur-md">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-          <div className="flex items-center gap-3">
-            <BrandLogo priority className="h-16 w-auto" />
-            <div>
-              <p className="text-xs text-slate-500">
-                {ctx.name}
-                <span className="mx-1.5 text-slate-300">/</span>
-                {ctx.role === "teacher" ? "Teacher" : "Student"}
-                <span className="mx-1.5 text-slate-300">/</span>
-                {ctx.groupName}
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            {ctx.role === "teacher" && <NateModeSwitch groupId={ctx.groupId} mode={ctx.newintervene} />}
-            <a
-              href={PRE_TEST}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-200"
-            >
-              Pre test
-            </a>
-            <a
-              href={POST_TEST}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="rounded-full bg-slate-100 px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-200"
-            >
-              Post test
-            </a>
-            <form action={logout}>
-              <Button
-                type="submit"
-                variant="outline"
-                size="sm"
-                className="h-8 rounded-xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-              >
-                <LogOut className="mr-1.5 h-3.5 w-3.5" />
-                Logout
-              </Button>
-            </form>
-          </div>
-        </div>
-      </header>
-      <div className="grid min-h-0 flex-1 gap-3 overflow-hidden p-3 lg:grid-cols-2">
-        <div className="conet-surface min-h-0 overflow-hidden">
-          <ChatPanel
-            initialMessages={messages}
-            currentUserId={ctx.profileId}
+      <ClassroomHeader name={ctx.name} role="student" groupName={ctx.groupName} />
+      <div className="grid min-h-0 flex-1 gap-3 overflow-hidden p-3 lg:grid-cols-[16rem_minmax(0,1fr)_minmax(0,1fr)]">
+        <div className="conet-surface min-h-0 overflow-hidden max-lg:max-h-64">
+          <SessionRail
             groupId={ctx.groupId}
-            groupName={ctx.groupName}
-            currentUserName={ctx.name}
-            newintervene={ctx.newintervene}
+            sessions={chats.sessions}
+            activeSessionId={active?.id || null}
+            currentUserId={ctx.profileId}
           />
         </div>
         <div className="conet-surface min-h-0 overflow-hidden">
-          <EditorPanel initialContent={document} groupId={ctx.groupId} groupMembers={peers} />
+          {active ? (
+            <ChatPanel
+              key={active.id}
+              initialMessages={messages}
+              currentUserId={ctx.profileId}
+              groupId={ctx.groupId}
+              groupName={ctx.groupName}
+              sessionId={active.id}
+              sessionTitle={active.title}
+              currentUserName={ctx.name}
+              newintervene={ctx.newintervene}
+            />
+          ) : (
+            <EmptySession
+              title="Create a chat session"
+              body="Your group is set. Add a session on the left, then start the conversation."
+            />
+          )}
+        </div>
+        <div className="conet-surface min-h-0 overflow-hidden">
+          <EditorPanel key={ctx.groupId} initialContent={document} groupId={ctx.groupId} groupMembers={peers} />
         </div>
       </div>
     </div>

@@ -28,8 +28,8 @@ export interface SessionContext {
   name: string
   email: string | null
   role: "teacher" | "student" | "ai"
-  groupId: string
-  groupName: string
+  groupId: string | null
+  groupName: string | null
   newintervene: NateMode
 }
 
@@ -93,35 +93,60 @@ export async function getSessionContext(): Promise<
     profile = inserted.data
   }
 
-  const membership = await supabase.rpc("conet_ensure_membership")
-  if (membership.error) {
-    if (missingTable(membership.error) || membership.error.code === "PGRST202") {
+  const sessionsProbe = await supabase.from("ConetSessions").select("id").limit(1)
+  if (sessionsProbe.error) {
+    const probeMessage = sessionsProbe.error.message || ""
+    const missing =
+      missingTable(sessionsProbe.error) ||
+      sessionsProbe.error.code === "PGRST202" ||
+      sessionsProbe.error.code === "42703" ||
+      /ConetSessions|session_id/i.test(probeMessage)
+    if (missing) {
       return {
         ok: false,
         needsSetup: true,
-        error: "The Conet tables are not in Supabase yet. Run supabase/conet-schema.sql in the SQL editor, then sign in again.",
+        error: "Chat groups are not in Supabase yet. Run supabase/conet-sessions.sql in the SQL editor, then refresh.",
       }
     }
-    return { ok: false, error: membership.error.message }
+    return { ok: false, error: sessionsProbe.error.message }
   }
 
-  const group = membership.data as {
-    group_id: string
-    group_name: string
-    newintervene: number
-    user_id: string
-  }
-
-  const membersQuery = await supabase
+  const membership = await supabase
     .from("ConetGroupMembers")
-    .select("user_id, ConetUsers(id, name, avatar_url, role)")
-    .eq("group_id", group.group_id)
+    .select("group_id, created_at, ConetGroups(id, name, newintervene)")
+    .eq("user_id", profile.id)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle()
+
+  if (membership.error) return { ok: false, error: membership.error.message }
+
+  const membershipRow = membership.data as {
+    group_id: string
+    ConetGroups:
+      | { id: string; name: string; newintervene: number }
+      | { id: string; name: string; newintervene: number }[]
+      | null
+  } | null
+  const embedded = membershipRow
+    ? Array.isArray(membershipRow.ConetGroups)
+      ? membershipRow.ConetGroups[0]
+      : membershipRow.ConetGroups
+    : null
+  const groupId = embedded?.id || membershipRow?.group_id || null
 
   const members: GroupMember[] = []
-  if (!membersQuery.error && membersQuery.data) {
-    for (const row of membersQuery.data as Array<{ ConetUsers: GroupMember | GroupMember[] | null }>) {
-      const person = Array.isArray(row.ConetUsers) ? row.ConetUsers[0] : row.ConetUsers
-      if (person && person.role !== "ai") members.push(person)
+  if (groupId) {
+    const membersQuery = await supabase
+      .from("ConetGroupMembers")
+      .select("user_id, ConetUsers(id, name, avatar_url, role)")
+      .eq("group_id", groupId)
+
+    if (!membersQuery.error && membersQuery.data) {
+      for (const row of membersQuery.data as Array<{ ConetUsers: GroupMember | GroupMember[] | null }>) {
+        const person = Array.isArray(row.ConetUsers) ? row.ConetUsers[0] : row.ConetUsers
+        if (person && person.role !== "ai") members.push(person)
+      }
     }
   }
 
@@ -132,20 +157,20 @@ export async function getSessionContext(): Promise<
       name: profile.name,
       email: profile.email,
       role: profile.role,
-      groupId: group.group_id,
-      groupName: group.group_name,
-      newintervene: normalizeNateMode(group.newintervene),
+      groupId,
+      groupName: embedded?.name || null,
+      newintervene: normalizeNateMode(embedded?.newintervene),
     },
     members,
   }
 }
 
-export async function getMessages(groupId: string): Promise<Message[]> {
+export async function getSessionMessages(sessionId: string): Promise<Message[]> {
   const supabase = await createClient()
   const { data, error } = await supabase
     .from("ConetMessages")
     .select("id, content, created_at, user_id, reply_to, is_reply, ConetUsers(name, avatar_url, role)")
-    .eq("group_id", groupId)
+    .eq("session_id", sessionId)
     .order("created_at", { ascending: true })
 
   if (error || !data) return []
@@ -155,6 +180,7 @@ export async function getMessages(groupId: string): Promise<Message[]> {
 const messageSchema = z.object({
   message: z.string().trim().min(1, "Message cannot be empty"),
   groupId: z.string().uuid(),
+  sessionId: z.string().uuid(),
   replyTo: z.string().uuid().optional().or(z.literal("")),
 })
 
@@ -176,17 +202,21 @@ export async function sendMessage(_prevState: unknown, formData: FormData) {
   const parsed = messageSchema.safeParse({
     message: formData.get("message"),
     groupId: formData.get("groupId"),
+    sessionId: formData.get("sessionId"),
     replyTo: formData.get("replyTo") || undefined,
   })
   if (!parsed.success) return { error: "Invalid input." }
 
-  const { message, groupId } = parsed.data
+  const { message, groupId, sessionId } = parsed.data
   const replyTo = parsed.data.replyTo || null
-  if (groupId !== session.ctx.groupId) return { error: "Unauthorized" }
+  if (session.ctx.role !== "student" || !session.ctx.groupId || groupId !== session.ctx.groupId) {
+    return { error: "Unauthorized" }
+  }
 
   const supabase = await createClient()
   const inserted = await supabase.rpc("conet_send_message", {
     p_group_id: groupId,
+    p_session_id: sessionId,
     p_content: message,
     p_reply_to: replyTo,
   })
@@ -197,6 +227,7 @@ export async function sendMessage(_prevState: unknown, formData: FormData) {
       .from("ConetMessages")
       .insert({
         group_id: groupId,
+        session_id: sessionId,
         user_id: session.ctx.profileId,
         content: message,
         reply_to: replyTo,
@@ -218,6 +249,7 @@ export async function sendMessage(_prevState: unknown, formData: FormData) {
 
   const thinking = await supabase.rpc("conet_post_nate_message", {
     p_group_id: groupId,
+    p_session_id: sessionId,
     p_content: NATE_THINKING,
   })
 
@@ -227,6 +259,7 @@ export async function sendMessage(_prevState: unknown, formData: FormData) {
       .from("ConetMessages")
       .insert({
         group_id: groupId,
+        session_id: sessionId,
         user_id: NATE_USER_ID,
         content: NATE_THINKING,
         is_reply: false,
@@ -239,18 +272,21 @@ export async function sendMessage(_prevState: unknown, formData: FormData) {
   return { success: true as const, thinkingId }
 }
 
-export async function finishNateReply(groupId: string, thinkingId: string) {
+export async function finishNateReply(groupId: string, sessionId: string, thinkingId: string) {
   const session = await getSessionContext()
   if (!session.ok) return { error: session.error }
-  if (groupId !== session.ctx.groupId) return { error: "Unauthorized" }
+  if (session.ctx.role !== "student" || session.ctx.groupId !== groupId) return { error: "Unauthorized" }
   if (session.ctx.newintervene === 3) return { success: true }
 
   const supabase = await createClient()
+  const chat = await supabase.from("ConetSessions").select("id, group_id").eq("id", sessionId).maybeSingle()
+  if (!chat.data || chat.data.group_id !== groupId) return { error: "Unauthorized" }
+
   const thinking = await supabase
     .from("ConetMessages")
     .select("id, content, created_at")
     .eq("id", thinkingId)
-    .eq("group_id", groupId)
+    .eq("session_id", sessionId)
     .maybeSingle()
 
   if (!thinking.data || thinking.data.content !== NATE_THINKING) return { success: true }
@@ -258,7 +294,7 @@ export async function finishNateReply(groupId: string, thinkingId: string) {
   const later = await supabase
     .from("ConetMessages")
     .select("id")
-    .eq("group_id", groupId)
+    .eq("session_id", sessionId)
     .eq("user_id", NATE_USER_ID)
     .neq("content", NATE_THINKING)
     .gt("created_at", thinking.data.created_at)
@@ -269,7 +305,7 @@ export async function finishNateReply(groupId: string, thinkingId: string) {
   const recent = await supabase
     .from("ConetMessages")
     .select("content, user_id, created_at, ConetUsers(name)")
-    .eq("group_id", groupId)
+    .eq("session_id", sessionId)
     .order("created_at", { ascending: false })
     .limit(10)
 
@@ -299,12 +335,14 @@ export async function finishNateReply(groupId: string, thinkingId: string) {
 
   const saved = await supabase.rpc("conet_post_nate_message", {
     p_group_id: groupId,
+    p_session_id: sessionId,
     p_content: reply,
   })
 
   if (saved.error) {
     const direct = await supabase.from("ConetMessages").insert({
       group_id: groupId,
+      session_id: sessionId,
       user_id: NATE_USER_ID,
       content: reply,
       is_reply: false,
@@ -330,7 +368,7 @@ export async function saveDocumentSnapshot(content: string | null | undefined, g
   const session = await getSessionContext()
   if (!session.ok) return { error: session.error }
   if (content === null || content === undefined) return { error: "Invalid content." }
-  if (groupId !== session.ctx.groupId) return { error: "Unauthorized" }
+  if (!session.ctx.groupId || groupId !== session.ctx.groupId) return { error: "Unauthorized" }
 
   const supabase = await createClient()
   const existing = await supabase
@@ -371,7 +409,7 @@ export async function saveDocumentSnapshot(content: string | null | undefined, g
 export async function submitFinalDocument(groupId: string) {
   const session = await getSessionContext()
   if (!session.ok) return { error: session.error }
-  if (groupId !== session.ctx.groupId) return { error: "Unauthorized" }
+  if (!session.ctx.groupId || groupId !== session.ctx.groupId) return { error: "Unauthorized" }
 
   const supabase = await createClient()
   const doc = await supabase
@@ -414,7 +452,6 @@ export async function updateGroupNewIntervention(groupId: string, newintervene: 
   const session = await getSessionContext()
   if (!session.ok) return { success: false, error: session.error }
   if (session.ctx.role !== "teacher") return { success: false, error: "Only a teacher can change NATE's mode." }
-  if (groupId !== session.ctx.groupId) return { success: false, error: "Unauthorized" }
   const mode = normalizeNateMode(newintervene)
   if (![1, 2, 3].includes(newintervene)) return { success: false, error: "Unknown mode." }
 

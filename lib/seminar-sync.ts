@@ -17,11 +17,11 @@ export type SendMessageResult =
   | { ok: true; messageId: string; thinkingId: string | null }
   | { ok: false; error: string }
 
-export async function fetchGroupMessages(supabase: SupabaseClient, groupId: string): Promise<Message[] | null> {
+export async function fetchSessionMessages(supabase: SupabaseClient, sessionId: string): Promise<Message[] | null> {
   const { data, error } = await supabase
     .from("ConetMessages")
     .select(MESSAGE_COLUMNS)
-    .eq("group_id", groupId)
+    .eq("session_id", sessionId)
     .order("created_at", { ascending: true })
 
   if (error || !data) return null
@@ -86,12 +86,14 @@ export async function touchPresence(supabase: SupabaseClient, groupId: string, u
 async function insertUserMessage(
   supabase: SupabaseClient,
   groupId: string,
+  sessionId: string,
   userId: string,
   content: string,
   replyTo: string | null
 ) {
   const rpc = await supabase.rpc("conet_send_message", {
     p_group_id: groupId,
+    p_session_id: sessionId,
     p_content: content,
     p_reply_to: replyTo,
   })
@@ -103,6 +105,7 @@ async function insertUserMessage(
     .from("ConetMessages")
     .insert({
       group_id: groupId,
+      session_id: sessionId,
       user_id: userId,
       content,
       reply_to: replyTo,
@@ -117,9 +120,10 @@ async function insertUserMessage(
   return { id: direct.data.id as string, error: null as string | null }
 }
 
-async function insertNateThinking(supabase: SupabaseClient, groupId: string) {
+async function insertNateThinking(supabase: SupabaseClient, groupId: string, sessionId: string) {
   const rpc = await supabase.rpc("conet_post_nate_message", {
     p_group_id: groupId,
+    p_session_id: sessionId,
     p_content: NATE_THINKING,
   })
   if (!rpc.error && typeof rpc.data === "string") return rpc.data as string
@@ -128,6 +132,7 @@ async function insertNateThinking(supabase: SupabaseClient, groupId: string) {
     .from("ConetMessages")
     .insert({
       group_id: groupId,
+      session_id: sessionId,
       user_id: NATE_USER_ID,
       content: NATE_THINKING,
       is_reply: false,
@@ -143,6 +148,7 @@ export async function sendGroupMessage(
   supabase: SupabaseClient,
   options: {
     groupId: string
+    sessionId: string
     userId: string
     content: string
     replyTo?: string | null
@@ -154,14 +160,21 @@ export async function sendGroupMessage(
   if (!content) return { ok: false, error: "Message cannot be empty" }
 
   const replyTo = options.replyTo || null
-  const inserted = await insertUserMessage(supabase, options.groupId, options.userId, content, replyTo)
+  const inserted = await insertUserMessage(
+    supabase,
+    options.groupId,
+    options.sessionId,
+    options.userId,
+    content,
+    replyTo
+  )
   if (!inserted.id) return { ok: false, error: inserted.error || "Failed to send message" }
 
   const trigger =
     options.nateMode !== 3 && (mentionsNATE(content) || Boolean(options.replyTargetsNate))
   if (!trigger) return { ok: true, messageId: inserted.id, thinkingId: null }
 
-  const thinkingId = await insertNateThinking(supabase, options.groupId)
+  const thinkingId = await insertNateThinking(supabase, options.groupId, options.sessionId)
   return { ok: true, messageId: inserted.id, thinkingId }
 }
 

@@ -1,5 +1,6 @@
 -- CoNetLearn tables. Names use the Conet prefix.
 -- Safe to re-run. Does not touch other tables in this project.
+-- Group chat sessions live in supabase/conet-sessions.sql. Run that file after this one.
 
 create extension if not exists pgcrypto;
 
@@ -136,12 +137,29 @@ as $$
   );
 $$;
 
+create or replace function public.conet_am_teacher()
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public."ConetUsers"
+    where auth_id = auth.uid()
+      and role = 'teacher'
+  );
+$$;
+
 revoke all on function public.conet_my_profile_id() from public;
 revoke all on function public.conet_is_member(uuid) from public;
 revoke all on function public.conet_is_teacher(uuid) from public;
+revoke all on function public.conet_am_teacher() from public;
 grant execute on function public.conet_my_profile_id() to authenticated;
 grant execute on function public.conet_is_member(uuid) to authenticated;
 grant execute on function public.conet_is_teacher(uuid) to authenticated;
+grant execute on function public.conet_am_teacher() to authenticated;
 
 drop policy if exists "ConetUsers_select" on public."ConetUsers";
 create policy "ConetUsers_select" on public."ConetUsers"
@@ -153,19 +171,28 @@ create policy "ConetUsers_insert_own" on public."ConetUsers"
 
 drop policy if exists "ConetGroups_select" on public."ConetGroups";
 create policy "ConetGroups_select" on public."ConetGroups"
-  for select to authenticated using (public.conet_is_member(id));
+  for select to authenticated using (true);
 
 drop policy if exists "ConetGroups_teacher_update" on public."ConetGroups";
 create policy "ConetGroups_teacher_update" on public."ConetGroups"
-  for update to authenticated using (public.conet_is_teacher(id));
+  for update to authenticated
+  using (public.conet_am_teacher())
+  with check (public.conet_am_teacher());
 
 drop policy if exists "ConetGroupMembers_select" on public."ConetGroupMembers";
 create policy "ConetGroupMembers_select" on public."ConetGroupMembers"
-  for select to authenticated using (public.conet_is_member(group_id));
+  for select to authenticated using (
+    public.conet_am_teacher()
+    or user_id = public.conet_my_profile_id()
+    or public.conet_is_member(group_id)
+  );
 
 drop policy if exists "ConetMessages_select" on public."ConetMessages";
 create policy "ConetMessages_select" on public."ConetMessages"
-  for select to authenticated using (public.conet_is_member(group_id));
+  for select to authenticated using (
+    public.conet_am_teacher()
+    or public.conet_is_member(group_id)
+  );
 
 drop policy if exists "ConetMessages_insert" on public."ConetMessages";
 create policy "ConetMessages_insert" on public."ConetMessages"
@@ -176,6 +203,35 @@ create policy "ConetMessages_insert" on public."ConetMessages"
       or user_id = '00000000-0000-0000-0000-000000000999'
     )
   );
+
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'ConetMessages'
+      and column_name = 'session_id'
+  ) then
+    execute 'drop policy if exists "ConetMessages_insert" on public."ConetMessages"';
+    execute $policy$
+      create policy "ConetMessages_insert" on public."ConetMessages"
+      for insert to authenticated with check (
+        public.conet_is_member(group_id)
+        and (
+          user_id = public.conet_my_profile_id()
+          or user_id = '00000000-0000-0000-0000-000000000999'
+        )
+        and exists (
+          select 1
+          from public."ConetSessions" s
+          where s.id = session_id
+            and s.group_id = group_id
+        )
+      )
+    $policy$;
+  end if;
+end $$;
 
 drop policy if exists "ConetDocuments_select" on public."ConetDocuments";
 create policy "ConetDocuments_select" on public."ConetDocuments"
@@ -256,20 +312,13 @@ begin
     returning * into profile;
   end if;
 
-  select id, name, newintervene into gid, gname, gmode
-  from public."ConetGroups"
-  where name = 'CoNet Seminar'
+  select g.id, g.name, g.newintervene
+    into gid, gname, gmode
+  from public."ConetGroupMembers" m
+  join public."ConetGroups" g on g.id = m.group_id
+  where m.user_id = profile.id
+  order by m.created_at
   limit 1;
-
-  if gid is null then
-    insert into public."ConetGroups" (name, newintervene, intervene)
-    values ('CoNet Seminar', 1, true)
-    returning id, name, newintervene into gid, gname, gmode;
-  end if;
-
-  insert into public."ConetGroupMembers" (group_id, user_id)
-  values (gid, profile.id)
-  on conflict do nothing;
 
   return jsonb_build_object(
     'group_id', gid,
@@ -371,7 +420,10 @@ grant select, insert, update, delete on public."ConetPresence" to authenticated;
 
 drop policy if exists "ConetPresence_select" on public."ConetPresence";
 create policy "ConetPresence_select" on public."ConetPresence"
-  for select to authenticated using (public.conet_is_member(group_id));
+  for select to authenticated using (
+    public.conet_am_teacher()
+    or public.conet_is_member(group_id)
+  );
 
 drop policy if exists "ConetPresence_insert" on public."ConetPresence";
 create policy "ConetPresence_insert" on public."ConetPresence"

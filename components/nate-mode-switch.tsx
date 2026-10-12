@@ -1,8 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { updateGroupNewIntervention } from "@/lib/actions"
+import { refreshRoute } from "@/lib/refresh-route"
 
 const modes = [
   { id: 1, label: "Guided", hint: "Trained partner" },
@@ -15,13 +16,21 @@ export default function NateModeSwitch({ groupId, mode }: { groupId: string; mod
   const [current, setCurrent] = useState(mode)
   const [pending, setPending] = useState(false)
 
+  useEffect(() => {
+    setCurrent(mode)
+  }, [mode])
+
   async function choose(next: number) {
     if (next === current || pending) return
     setPending(true)
-    const result = await updateGroupNewIntervention(groupId, next)
-    if (result.success) {
-      setCurrent(next)
-      router.refresh()
+    try {
+      const result = await updateGroupNewIntervention(groupId, next)
+      if (result.success) {
+        setCurrent(next)
+        refreshRoute(router)
+      }
+    } catch {
+      setCurrent(mode)
     }
     setPending(false)
   }

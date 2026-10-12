@@ -14,18 +14,23 @@ export const POST = withApiLogging("send-message:POST", async (request: NextRequ
     const body = await request.json()
     const message = typeof body.message === "string" ? body.message.trim() : ""
     const groupId = body.groupId
+    const sessionId = body.sessionId
     const replyTo = typeof body.replyTo === "string" && body.replyTo ? body.replyTo : null
 
     if (!message) {
       return NextResponse.json({ error: "Message is required and cannot be empty" }, { status: 400 })
     }
-    if (!groupId || groupId !== session.ctx.groupId) {
+    if (session.ctx.role !== "student" || !session.ctx.groupId || !groupId || groupId !== session.ctx.groupId) {
       return NextResponse.json({ error: "groupId is required" }, { status: 400 })
+    }
+    if (!sessionId || typeof sessionId !== "string") {
+      return NextResponse.json({ error: "sessionId is required" }, { status: 400 })
     }
 
     const supabase = await createClient()
     const inserted = await supabase.from("ConetMessages").insert({
       group_id: groupId,
+      session_id: sessionId,
       user_id: session.ctx.profileId,
       content: message,
       reply_to: replyTo,
@@ -44,11 +49,17 @@ export const POST = withApiLogging("send-message:POST", async (request: NextRequ
     if (trigger && session.ctx.newintervene !== 3) {
       const thinking = await supabase
         .from("ConetMessages")
-        .insert({ group_id: groupId, user_id: NATE_USER_ID, content: NATE_THINKING, is_reply: false })
+        .insert({
+          group_id: groupId,
+          session_id: sessionId,
+          user_id: NATE_USER_ID,
+          content: NATE_THINKING,
+          is_reply: false,
+        })
         .select("id")
         .single()
       if (thinking.data?.id) {
-        await finishNateReply(groupId, thinking.data.id)
+        await finishNateReply(groupId, sessionId, thinking.data.id)
       }
     }
 
