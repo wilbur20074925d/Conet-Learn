@@ -30,8 +30,9 @@ export default function SessionRail({
     const nextTitle = title.trim()
     if (!nextTitle || creating) return
     setTitle("")
-    setCreating(true)
     setError("")
+    setCreating(true)
+    // Session opens optimistically; this flag only prevents double-submit until the server confirms.
     const result = await onCreate(nextTitle)
     setCreating(false)
     if (!result.ok) {
@@ -107,7 +108,7 @@ export default function SessionRail({
           className="mt-2 flex h-10 w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50"
         >
           <Plus className="h-4 w-4" />
-          {creating ? "Creating…" : "Create session"}
+          Create session
         </button>
         {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
       </form>

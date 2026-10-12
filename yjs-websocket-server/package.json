@@ -1,0 +1,23 @@
+{
+  "name": "yjs-websocket-server",
+  "version": "1.0.0",
+  "description": "Yjs WebSocket server for collaborative editing with Supabase persistence and action tracking",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "keywords": ["yjs", "websocket", "collaboration", "crdt"],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "yjs": "^13.6.9",
+    "y-websocket": "^2.0.3",
+    "y-protocols": "^1.0.6",
+    "lib0": "^0.2.99",
+    "ws": "^8.16.0",
+    "@supabase/supabase-js": "^2.39.0",
+    "dotenv": "^16.3.1"
+  }
+}

@@ -19,6 +19,10 @@ function friendly(message: string) {
   return "Something went wrong. Please try again."
 }
 
+export function isTempSessionId(sessionId: string) {
+  return sessionId.startsWith("temp-")
+}
+
 export function writeSessionQuery(sessionId: string | null) {
   const url = new URL(window.location.href)
   if (sessionId) url.searchParams.set("session", sessionId)

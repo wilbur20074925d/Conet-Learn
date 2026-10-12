@@ -23,6 +23,7 @@ import {
   touchPresence,
   type SessionUser,
 } from "@/lib/seminar-sync"
+import { isTempSessionId } from "@/lib/session-browser"
 import { createClient } from "@/lib/supabase/browser"
 import { BookOpen, Check, Copy, Reply, SendHorizonal, X } from "lucide-react"
 
@@ -469,8 +470,11 @@ export default function ChatPanel({
   awaitInitial?: boolean
   onReady?: (messages: Message[]) => void
 }) {
+  const pendingSession = isTempSessionId(sessionId)
   const [messages, setMessages] = useState(initialMessages)
-  const [messagesLoaded, setMessagesLoaded] = useState(!awaitInitial || initialMessages.length > 0)
+  const [messagesLoaded, setMessagesLoaded] = useState(
+    pendingSession || !awaitInitial || initialMessages.length > 0
+  )
   const onReadyRef = useRef(onReady)
   onReadyRef.current = onReady
   const [replyingTo, setReplyingTo] = useState<Message | null>(null)
@@ -635,7 +639,7 @@ export default function ChatPanel({
   }, [persistOutbox])
 
   useEffect(() => {
-    if (readOnly) return
+    if (readOnly || pendingSession) return
     const stored = readOutbox(sessionId)
     if (stored.length === 0) return
     for (const item of stored) outboxRef.current.set(item.clientId, { ...item, paused: false })
@@ -657,7 +661,7 @@ export default function ChatPanel({
       for (const timer of timersRef.current.values()) window.clearTimeout(timer)
       timersRef.current.clear()
     }
-  }, [persistOutbox, readOnly, sessionId])
+  }, [persistOutbox, readOnly, sessionId, pendingSession])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
@@ -670,6 +674,13 @@ export default function ChatPanel({
   }, [initialMessages])
 
   useEffect(() => {
+    if (pendingSession) {
+      setMessages(initialMessages)
+      setMessagesLoaded(true)
+      onReadyRef.current?.(initialMessages)
+      return
+    }
+
     const supabase = createClient()
     let stopped = false
     let roomReady = false
@@ -826,8 +837,11 @@ export default function ChatPanel({
       setMessagesLoaded(true)
       onReadyRef.current?.(latest)
     })
-    void beat()
-    void refreshPresence()
+    // Presence + heartbeat run after first paint so opening a session feels instant.
+    const startPresence = window.setTimeout(() => {
+      if (stopped) return
+      void beat()
+    }, 0)
 
     const onWake = () => {
       if (document.visibilityState === "hidden") {
@@ -866,6 +880,7 @@ export default function ChatPanel({
 
     return () => {
       stopped = true
+      window.clearTimeout(startPresence)
       clearInterval(heartbeat)
       clearInterval(reconcile)
       clearInterval(prune)
@@ -876,7 +891,7 @@ export default function ChatPanel({
       supabase.removeChannel(room)
       supabase.removeChannel(presenceTable)
     }
-  }, [groupId, groupName, sessionId, currentUserId, currentUserName, readOnly])
+  }, [groupId, groupName, sessionId, currentUserId, currentUserName, readOnly, pendingSession])
 
   const visibleMessages = useMemo(() => {
     return messages.filter((message) => {
@@ -976,7 +991,9 @@ export default function ChatPanel({
           )}
           {messagesLoaded && visibleMessages.length === 0 && (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
-              <p className="text-lg font-bold tracking-tight text-slate-900">This session is empty.</p>
+              <p className="text-lg font-bold tracking-tight text-slate-900">
+                {pendingSession ? "Starting your session…" : "This session is empty."}
+              </p>
             </div>
           )}
           {visibleMessages.map((msg) => {
@@ -1046,6 +1063,8 @@ export default function ChatPanel({
       <footer className="border-t border-slate-100 bg-white px-5 py-4">
         {readOnly ? (
           <p className="text-sm text-slate-500">You are viewing this session. Students write the messages here.</p>
+        ) : pendingSession ? (
+          <p className="text-sm text-slate-500">Setting up this session…</p>
         ) : (
           <ChatInputForm
             currentUserId={currentUserId}

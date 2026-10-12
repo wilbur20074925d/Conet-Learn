@@ -162,9 +162,9 @@ export default function EditorPanel({
               1
             </span>
             <div className="min-w-0 flex-1">
-              <h3 className="truncate text-sm font-bold">Initial thoughts on both sides</h3>
+              <h3 className="truncate text-sm font-bold">Initial thoughts</h3>
               <p className="truncate text-[11px] text-neutral-500">
-                Should generative AI in social media content be regulated?
+                Your initial thoughts on the given question
               </p>
             </div>
             <span className="shrink-0 text-[11px] font-semibold tabular-nums text-neutral-500">

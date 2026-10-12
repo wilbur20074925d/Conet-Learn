@@ -1,26 +1,38 @@
+"use client"
+
 import { Lock, LogOut } from "lucide-react"
 import BrandLogo from "@/components/brand-logo"
 import { Button } from "@/components/ui/button"
+import type { StudentWorkspaceMode } from "@/components/student-workspace"
 import { logout } from "@/lib/auth.actions"
+import { cn } from "@/lib/utils"
 
-const PRE_TEST = "https://docs.google.com/forms/d/e/1FAIpQLSd7K9E5F6Zc9Q-7_D7hUbq9Tw9F0tvBxXO-8p987neg2futgA/viewform?usp=header"
-const POST_TEST = "https://docs.google.com/forms/d/e/1FAIpQLSc2ZBYWpaFGkSBQHkdKyLcLLQJrK8ogomjcN185vna6TJEnZg/viewform?usp=publish-editor"
+const PRE_TEST =
+  "https://docs.google.com/forms/d/e/1FAIpQLSd7K9E5F6Zc9Q-7_D7hUbq9Tw9F0tvBxXO-8p987neg2futgA/viewform?usp=header"
+const POST_TEST =
+  "https://docs.google.com/forms/d/e/1FAIpQLSc2ZBYWpaFGkSBQHkdKyLcLLQJrK8ogomjcN185vna6TJEnZg/viewform?usp=publish-editor"
 
 export default function ClassroomHeader({
   name,
   role,
   groupName,
+  showWorkspaceNav = false,
+  workspaceMode = "group-project",
+  onWorkspaceModeChange,
 }: {
   name: string
   role: "teacher" | "student" | "ai"
   groupName?: string | null
+  showWorkspaceNav?: boolean
+  workspaceMode?: StudentWorkspaceMode
+  onWorkspaceModeChange?: (mode: StudentWorkspaceMode) => void
 }) {
   return (
     <header className="border-b border-slate-200/80 bg-white/80 backdrop-blur-md">
       <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
           <BrandLogo priority className="h-16 w-auto" />
-          <div>
+          <div className="min-w-0">
             <p className="text-xs text-slate-500">
               {name}
               <span className="mx-1.5 text-slate-300">/</span>
@@ -36,9 +48,40 @@ export default function ClassroomHeader({
               )}
             </p>
             {role === "student" && groupName && (
-              <p className="mt-0.5 text-[11px] text-slate-400">Your teacher is the only person who can move you to another group.</p>
+              <p className="mt-0.5 text-[11px] text-slate-400">
+                Your teacher is the only person who can move you to another group.
+              </p>
             )}
           </div>
+
+          {showWorkspaceNav && onWorkspaceModeChange && (
+            <nav className="ml-1 flex items-center rounded-xl border border-slate-200 bg-slate-50 p-1">
+              <button
+                type="button"
+                onClick={() => onWorkspaceModeChange("in-class")}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition",
+                  workspaceMode === "in-class"
+                    ? "bg-neutral-950 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-white hover:text-slate-900"
+                )}
+              >
+                In-class session
+              </button>
+              <button
+                type="button"
+                onClick={() => onWorkspaceModeChange("group-project")}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition",
+                  workspaceMode === "group-project"
+                    ? "bg-neutral-950 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-white hover:text-slate-900"
+                )}
+              >
+                Group project
+              </button>
+            </nav>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <a

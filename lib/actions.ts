@@ -1,5 +1,6 @@
 "use server"
 
+import { cache } from "react"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createClient } from "./supabase/server"
@@ -47,9 +48,9 @@ function missingTable(error: { code?: string; message?: string } | null) {
   return error.code === "PGRST205" || error.code === "42P01" || /Conet/i.test(error.message || "") && /schema cache|does not exist/i.test(error.message || "")
 }
 
-export async function getSessionContext(): Promise<
+export const getSessionContext = cache(async (): Promise<
   { ok: true; ctx: SessionContext; members: GroupMember[] } | { ok: false; error: string; needsSetup?: boolean }
-> {
+> => {
   const supabase = await createClient()
   const { data: authData, error: authError } = await supabase.auth.getUser()
   if (authError || !authData.user) return { ok: false, error: "Unauthorized" }
@@ -93,24 +94,6 @@ export async function getSessionContext(): Promise<
     profile = inserted.data
   }
 
-  const sessionsProbe = await supabase.from("ConetSessions").select("id").limit(1)
-  if (sessionsProbe.error) {
-    const probeMessage = sessionsProbe.error.message || ""
-    const missing =
-      missingTable(sessionsProbe.error) ||
-      sessionsProbe.error.code === "PGRST202" ||
-      sessionsProbe.error.code === "42703" ||
-      /ConetSessions|session_id/i.test(probeMessage)
-    if (missing) {
-      return {
-        ok: false,
-        needsSetup: true,
-        error: "Chat groups are not in Supabase yet. Run supabase/conet-sessions.sql in the SQL editor, then refresh.",
-      }
-    }
-    return { ok: false, error: sessionsProbe.error.message }
-  }
-
   const membership = await supabase
     .from("ConetGroupMembers")
     .select("group_id, created_at, ConetGroups(id, name, newintervene)")
@@ -119,7 +102,16 @@ export async function getSessionContext(): Promise<
     .limit(1)
     .maybeSingle()
 
-  if (membership.error) return { ok: false, error: membership.error.message }
+  if (membership.error) {
+    if (missingTable(membership.error)) {
+      return {
+        ok: false,
+        needsSetup: true,
+        error: "Chat groups are not in Supabase yet. Run supabase/conet-sessions.sql in the SQL editor, then refresh.",
+      }
+    }
+    return { ok: false, error: membership.error.message }
+  }
 
   const membershipRow = membership.data as {
     group_id: string
@@ -135,21 +127,6 @@ export async function getSessionContext(): Promise<
     : null
   const groupId = embedded?.id || membershipRow?.group_id || null
 
-  const members: GroupMember[] = []
-  if (groupId) {
-    const membersQuery = await supabase
-      .from("ConetGroupMembers")
-      .select("user_id, ConetUsers(id, name, avatar_url, role)")
-      .eq("group_id", groupId)
-
-    if (!membersQuery.error && membersQuery.data) {
-      for (const row of membersQuery.data as Array<{ ConetUsers: GroupMember | GroupMember[] | null }>) {
-        const person = Array.isArray(row.ConetUsers) ? row.ConetUsers[0] : row.ConetUsers
-        if (person && person.role !== "ai") members.push(person)
-      }
-    }
-  }
-
   return {
     ok: true,
     ctx: {
@@ -161,9 +138,9 @@ export async function getSessionContext(): Promise<
       groupName: embedded?.name || null,
       newintervene: normalizeNateMode(embedded?.newintervene),
     },
-    members,
+    members: [],
   }
-}
+})
 
 export async function getSessionMessages(sessionId: string): Promise<Message[]> {
   const supabase = await createClient()

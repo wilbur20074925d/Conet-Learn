@@ -1,39 +1,26 @@
 "use client"
 
-import { FormEvent, useState } from "react"
-import { useRouter } from "next/navigation"
+import { FormEvent, useState, useTransition } from "react"
 import BrandLogo from "@/components/brand-logo"
-import { createClient } from "@/lib/supabase/browser"
+import { signIn } from "@/lib/auth.actions"
 import { INITIAL_STUDENT_PASSWORD } from "@/lib/student-password"
 
 const fieldClass =
   "h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-900/10"
 
 export default function LoginPage() {
-  const router = useRouter()
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
-  const [pending, setPending] = useState(false)
+  const [pending, startTransition] = useTransition()
 
-  async function signIn(event: FormEvent) {
+  function onSubmit(event: FormEvent) {
     event.preventDefault()
-    setPending(true)
     setError("")
-    const supabase = createClient()
-    const result = await supabase.auth.signInWithPassword({ email: email.trim(), password })
-    if (result.error) {
-      const message = result.error.message.toLowerCase()
-      setError(
-        message.includes("confirm")
-          ? "This email still needs to be confirmed before it can sign in."
-          : "Wrong email or password. Please try again."
-      )
-      setPending(false)
-      return
-    }
-    router.push("/")
-    router.refresh()
+    startTransition(async () => {
+      const result = await signIn(email, password)
+      if (result?.error) setError(result.error)
+    })
   }
 
   return (
@@ -45,7 +32,7 @@ export default function LoginPage() {
           <p className="mt-1.5 text-sm text-slate-500">Enter your email and password to continue</p>
         </div>
 
-        <form onSubmit={signIn} className="space-y-4 px-8 py-7">
+        <form onSubmit={onSubmit} className="space-y-4 px-8 py-7">
           <div>
             <label className="mb-1.5 block text-sm font-medium text-slate-700" htmlFor="email">
               Email address
@@ -82,8 +69,13 @@ export default function LoginPage() {
             disabled={pending}
             className="mt-2 h-11 w-full rounded-xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
           >
-            {pending ? "Signing in..." : "Sign in"}
+            {pending ? "Signing in…" : "Sign in"}
           </button>
+          {pending && (
+            <p className="text-center text-xs text-slate-400" aria-live="polite">
+              Checking your account and opening the classroom…
+            </p>
+          )}
         </form>
 
         <div className="border-t border-slate-100 px-8 py-5 text-center text-[11px] leading-relaxed text-slate-400">

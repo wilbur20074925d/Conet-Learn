@@ -16,11 +16,25 @@ export function useSessionBundles(sessionKey: string, initialId: string | null, 
   const inflight = useRef(new Set<string>())
 
   const remember = useCallback((sessionId: string, messages: Message[]) => {
-    setBundles((current) => {
-      const next = { ...current, [sessionId]: messages }
-      bundlesRef.current = next
-      return next
-    })
+    const next = { ...bundlesRef.current, [sessionId]: messages }
+    bundlesRef.current = next
+    setBundles(next)
+  }, [])
+
+  const forget = useCallback((sessionId: string) => {
+    if (!Object.prototype.hasOwnProperty.call(bundlesRef.current, sessionId)) return
+    const next = { ...bundlesRef.current }
+    delete next[sessionId]
+    bundlesRef.current = next
+    setBundles(next)
+  }, [])
+
+  const move = useCallback((fromId: string, toId: string) => {
+    const messages = bundlesRef.current[fromId] ?? EMPTY_MESSAGES
+    const next = { ...bundlesRef.current, [toId]: messages }
+    delete next[fromId]
+    bundlesRef.current = next
+    setBundles(next)
   }, [])
 
   const prefetch = useCallback((sessionId: string) => {
@@ -47,5 +61,5 @@ export function useSessionBundles(sessionKey: string, initialId: string | null, 
     return () => window.clearTimeout(timer)
   }, [sessionKey, prefetch])
 
-  return { bundles, remember, prefetch }
+  return { bundles, remember, forget, move, prefetch }
 }
