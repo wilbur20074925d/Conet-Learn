@@ -33,6 +33,12 @@ export type BoardGroup = {
   sessions: BoardSession[]
 }
 
+export type ClassroomStudent = {
+  id: string
+  name: string
+  email: string | null
+}
+
 function notReady(error: { code?: string; message?: string } | null) {
   if (!error) return false
   const message = error.message || ""
@@ -107,7 +113,7 @@ export async function listGroupSessions(groupId: string): Promise<
 }
 
 export async function getTeacherBoard(): Promise<
-  | { ok: true; groups: BoardGroup[]; waiting: { id: string; name: string }[] }
+  | { ok: true; groups: BoardGroup[]; waiting: { id: string; name: string }[]; students: ClassroomStudent[] }
   | { ok: false; error: string; needsSetup?: boolean }
 > {
   const supabase = await createClient()
@@ -118,7 +124,7 @@ export async function getTeacherBoard(): Promise<
       .from("ConetSessions")
       .select("id, group_id, title, created_at, created_by")
       .order("created_at", { ascending: false }),
-    supabase.from("ConetUsers").select("id, name").eq("role", "student").order("name", { ascending: true }),
+    supabase.from("ConetUsers").select("id, name, email").eq("role", "student").order("name", { ascending: true }),
   ])
 
   const error = groupsQuery.error || membersQuery.error || sessionsQuery.error || studentsQuery.error
@@ -169,9 +175,15 @@ export async function getTeacherBoard(): Promise<
     sessions: sessionsByGroup.get(group.id as string) || [],
   }))
 
-  const waiting = ((studentsQuery.data || []) as Array<{ id: string; name: string }>).filter(
-    (student) => !placed.has(student.id)
-  )
+  const students = ((studentsQuery.data || []) as ClassroomStudent[]).map((student) => ({
+    id: student.id,
+    name: student.name,
+    email: student.email,
+  }))
+  const waiting = students.filter((student) => !placed.has(student.id)).map((student) => ({
+    id: student.id,
+    name: student.name,
+  }))
 
-  return { ok: true, groups, waiting }
+  return { ok: true, groups, waiting, students }
 }

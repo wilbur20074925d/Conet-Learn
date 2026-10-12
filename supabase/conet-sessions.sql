@@ -27,6 +27,13 @@ create table if not exists public."ConetSessions" (
 alter table public."ConetMessages"
   add column if not exists session_id uuid references public."ConetSessions" (id) on delete cascade;
 
+alter table public."ConetMessages"
+  add column if not exists client_id uuid;
+
+create unique index if not exists "ConetMessages_client_id_idx"
+  on public."ConetMessages" (client_id)
+  where client_id is not null;
+
 create index if not exists "ConetSessions_group_created_idx"
   on public."ConetSessions" (group_id, created_at desc);
 
@@ -481,11 +488,14 @@ end;
 $$;
 
 drop function if exists public.conet_send_message(uuid, text, uuid);
+drop function if exists public.conet_send_message(uuid, uuid, text, uuid);
+drop function if exists public.conet_send_message(uuid, uuid, text, uuid, uuid);
 create or replace function public.conet_send_message(
   p_group_id uuid,
   p_session_id uuid,
   p_content text,
-  p_reply_to uuid default null
+  p_reply_to uuid default null,
+  p_client_id uuid default null
 )
 returns uuid
 language plpgsql
@@ -524,8 +534,20 @@ begin
     raise exception 'reply target not in this session';
   end if;
 
-  insert into public."ConetMessages" (group_id, session_id, user_id, content, reply_to, is_reply)
-  values (p_group_id, p_session_id, me, trim(p_content), p_reply_to, p_reply_to is not null)
+  if p_client_id is not null then
+    select id into mid
+    from public."ConetMessages"
+    where client_id = p_client_id
+      and user_id = me;
+    if mid is not null then
+      return mid;
+    end if;
+  end if;
+
+  insert into public."ConetMessages" (group_id, session_id, user_id, content, reply_to, is_reply, client_id)
+  values (p_group_id, p_session_id, me, trim(p_content), p_reply_to, p_reply_to is not null, p_client_id)
+  on conflict (client_id) where client_id is not null
+  do update set client_id = excluded.client_id
   returning id into mid;
 
   return mid;
@@ -583,7 +605,7 @@ revoke all on function public.conet_move_student(uuid, uuid) from public;
 revoke all on function public.conet_remove_student(uuid) from public;
 revoke all on function public.conet_create_session(uuid, text) from public;
 revoke all on function public.conet_delete_session(uuid) from public;
-revoke all on function public.conet_send_message(uuid, uuid, text, uuid) from public;
+revoke all on function public.conet_send_message(uuid, uuid, text, uuid, uuid) from public;
 revoke all on function public.conet_post_nate_message(uuid, uuid, text) from public;
 
 grant execute on function public.conet_create_group(text) to authenticated;
@@ -593,5 +615,39 @@ grant execute on function public.conet_move_student(uuid, uuid) to authenticated
 grant execute on function public.conet_remove_student(uuid) to authenticated;
 grant execute on function public.conet_create_session(uuid, text) to authenticated;
 grant execute on function public.conet_delete_session(uuid) to authenticated;
-grant execute on function public.conet_send_message(uuid, uuid, text, uuid) to authenticated;
+grant execute on function public.conet_send_message(uuid, uuid, text, uuid, uuid) to authenticated;
+
+alter table public."ConetPresence"
+  add column if not exists away boolean not null default false;
+
+drop function if exists public.conet_touch_presence(uuid);
+drop function if exists public.conet_touch_presence(uuid, boolean);
+create or replace function public.conet_touch_presence(p_group_id uuid, p_away boolean default false)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  me uuid := public.conet_my_profile_id();
+begin
+  if auth.uid() is null then
+    raise exception 'not authenticated';
+  end if;
+  if me is null then
+    raise exception 'profile missing';
+  end if;
+  if not public.conet_is_member(p_group_id) then
+    raise exception 'not a group member';
+  end if;
+
+  insert into public."ConetPresence" (group_id, user_id, last_seen, away)
+  values (p_group_id, me, now(), p_away)
+  on conflict (group_id, user_id)
+  do update set last_seen = now(), away = p_away;
+end;
+$$;
+
+revoke all on function public.conet_touch_presence(uuid, boolean) from public;
+grant execute on function public.conet_touch_presence(uuid, boolean) to authenticated;
 grant execute on function public.conet_post_nate_message(uuid, uuid, text) to authenticated;

@@ -9,12 +9,16 @@ import { finishNateReply, type Message } from "@/lib/actions"
 import { mapMessageRows, type RawMessage } from "@/lib/map-messages"
 import { NATE_THINKING, NATE_USER_ID } from "@/lib/nate"
 import {
+  AWAY_WINDOW_MS,
   fetchSessionMessages,
   fetchMessageById,
   fetchSessionUsers,
+  isRetryableSendError,
   isTempMessageId,
   mergeIncomingMessage,
-  ONLINE_WINDOW_MS,
+  OUTBOX_ATTEMPT_LIMIT,
+  refreshRealtimeAuth,
+  retryDelayMs,
   sendGroupMessage,
   touchPresence,
   type SessionUser,
@@ -23,37 +27,27 @@ import { createClient } from "@/lib/supabase/browser"
 import { BookOpen, Check, Copy, Reply, SendHorizonal, X } from "lucide-react"
 
 const ChatInputForm = memo(function ChatInputForm({
-  groupId,
-  sessionId,
   currentUserId,
   currentUserName,
   replyingTo,
   onCancelReply,
   newintervene,
   onOptimisticSend,
-  onSendConfirmed,
-  onSendFailed,
-  onThinking,
+  onQueueSend,
 }: {
-  groupId: string
-  sessionId: string
   currentUserId: string
   currentUserName: string
   replyingTo: Message | null
   onCancelReply: () => void
   newintervene: number
   onOptimisticSend: (message: Message) => void
-  onSendConfirmed: (tempId: string, realId: string) => void
-  onSendFailed: (tempId: string, error: string) => void
-  onThinking: (thinkingId: string) => void
+  onQueueSend: (item: QueuedSend) => void
 }) {
   const [inputValue, setInputValue] = useState("")
-  const [error, setError] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     setInputValue("")
-    setError("")
   }, [replyingTo])
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -61,10 +55,10 @@ const ChatInputForm = memo(function ChatInputForm({
     const content = inputValue.trim()
     if (!content) return
 
-    const tempId = `temp-${crypto.randomUUID()}`
+    const clientId = crypto.randomUUID()
     const reply = replyingTo
     const optimistic: Message = {
-      id: tempId,
+      id: `temp-${clientId}`,
       content,
       created_at: new Date().toISOString(),
       user_id: currentUserId,
@@ -78,37 +72,16 @@ const ChatInputForm = memo(function ChatInputForm({
         : null,
     }
 
-    setError("")
     setInputValue("")
     onCancelReply()
     onOptimisticSend(optimistic)
+    onQueueSend({
+      clientId,
+      message: optimistic,
+      replyTargetsNate: Boolean(reply?.is_ai),
+      nateMode: newintervene,
+    })
     queueMicrotask(() => inputRef.current?.focus())
-
-    void (async () => {
-      try {
-        const result = await sendGroupMessage(createClient(), {
-          groupId,
-          sessionId,
-          userId: currentUserId,
-          content,
-          replyTo: reply && !isTempMessageId(reply.id) ? reply.id : null,
-          replyTargetsNate: Boolean(reply?.is_ai),
-          nateMode: newintervene,
-        })
-
-        if (!result.ok) {
-          onSendFailed(tempId, result.error)
-          setError(result.error)
-          return
-        }
-
-        onSendConfirmed(tempId, result.messageId)
-        if (result.thinkingId) onThinking(result.thinkingId)
-      } catch {
-        onSendFailed(tempId, "Failed to send message, please try again.")
-        setError("Failed to send message, please try again.")
-      }
-    })()
   }
 
   return (
@@ -167,10 +140,40 @@ const ChatInputForm = memo(function ChatInputForm({
           <span className="sr-only">Send</span>
         </Button>
       </form>
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
     </div>
   )
 })
+
+type QueuedSend = {
+  clientId: string
+  message: Message
+  replyTargetsNate: boolean
+  nateMode: number
+}
+
+type OutboxItem = QueuedSend & {
+  attempts: number
+  lastError: string
+  paused: boolean
+}
+
+const startedNateReplies = new Set<string>()
+
+function outboxKey(sessionId: string) {
+  return `conet-outbox:${sessionId}`
+}
+
+function readOutbox(sessionId: string): OutboxItem[] {
+  try {
+    const raw = sessionStorage.getItem(outboxKey(sessionId))
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as OutboxItem[]
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((item) => item?.clientId && item.message?.content)
+  } catch {
+    return []
+  }
+}
 
 function escapeHtml(value: string) {
   return value
@@ -473,11 +476,28 @@ export default function ChatPanel({
   const [replyingTo, setReplyingTo] = useState<Message | null>(null)
   const [liveUsers, setLiveUsers] = useState<SessionUser[]>([])
   const [dbUsers, setDbUsers] = useState<SessionUser[]>([])
-  const [presenceReady, setPresenceReady] = useState(false)
+  const [linkStatus, setLinkStatus] = useState<"live" | "reconnecting">("live")
+  const [tabHidden, setTabHidden] = useState(false)
+  const [sendNotes, setSendNotes] = useState<Record<string, string>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const revealIds = useRef(new Set<string>())
+  const outboxRef = useRef(new Map<string, OutboxItem>())
+  const flushingRef = useRef(new Set<string>())
+  const timersRef = useRef(new Map<string, number>())
+  const flushOneRef = useRef<(clientId: string) => Promise<void>>(async () => {})
+  const wakeOutboxRef = useRef<() => void>(() => {})
 
   const cancelReply = useCallback(() => setReplyingTo(null), [])
+
+  const persistOutbox = useCallback(() => {
+    try {
+      const items = [...outboxRef.current.values()]
+      if (items.length === 0) sessionStorage.removeItem(outboxKey(sessionId))
+      else sessionStorage.setItem(outboxKey(sessionId), JSON.stringify(items))
+    } catch {
+      // Private browsing can block sessionStorage. The in-memory queue still retries.
+    }
+  }, [sessionId])
 
   const handleOptimisticSend = useCallback((message: Message) => {
     setMessages((prev) => [...prev, message])
@@ -487,14 +507,18 @@ export default function ChatPanel({
     setMessages((prev) =>
       prev.map((message) => (message.id === tempId ? { ...message, id: realId } : message))
     )
-  }, [])
-
-  const handleSendFailed = useCallback((tempId: string, _error: string) => {
-    setMessages((prev) => prev.filter((message) => message.id !== tempId))
+    setSendNotes((prev) => {
+      if (!prev[tempId]) return prev
+      const next = { ...prev }
+      delete next[tempId]
+      return next
+    })
   }, [])
 
   const handleThinking = useCallback(
     (thinkingId: string) => {
+      const alreadyStarted = startedNateReplies.has(thinkingId)
+      startedNateReplies.add(thinkingId)
       setMessages((prev) => {
         if (prev.some((message) => message.id === thinkingId)) return prev
         return [
@@ -513,10 +537,127 @@ export default function ChatPanel({
           },
         ]
       })
-      void finishNateReply(groupId, sessionId, thinkingId)
+      if (!alreadyStarted) void finishNateReply(groupId, sessionId, thinkingId)
     },
     [groupId, sessionId]
   )
+
+  flushOneRef.current = async (clientId: string) => {
+    const item = outboxRef.current.get(clientId)
+    if (!item || item.paused || flushingRef.current.has(clientId)) return
+    const waiting = timersRef.current.get(clientId)
+    if (waiting) {
+      window.clearTimeout(waiting)
+      timersRef.current.delete(clientId)
+    }
+    flushingRef.current.add(clientId)
+    setSendNotes((prev) => ({ ...prev, [item.message.id]: item.attempts > 0 ? "Will retry" : "Sending…" }))
+    try {
+      const supabase = createClient()
+      if (item.attempts > 0) await refreshRealtimeAuth(supabase)
+      const result = await sendGroupMessage(supabase, {
+        groupId,
+        sessionId,
+        userId: currentUserId,
+        content: item.message.content,
+        replyTo: item.message.reply_to && !isTempMessageId(item.message.reply_to) ? item.message.reply_to : null,
+        replyTargetsNate: item.replyTargetsNate,
+        nateMode: item.nateMode,
+        clientId,
+        createdAt: item.message.created_at,
+        recover: item.attempts > 0,
+      })
+      if (result.ok) {
+        outboxRef.current.delete(clientId)
+        persistOutbox()
+        handleSendConfirmed(item.message.id, result.messageId)
+        if (result.thinkingId) handleThinking(result.thinkingId)
+        return
+      }
+      item.attempts += 1
+      item.lastError = result.error
+      const retryable = isRetryableSendError(result.error)
+      if (!retryable || item.attempts >= OUTBOX_ATTEMPT_LIMIT) {
+        item.paused = true
+        persistOutbox()
+        setSendNotes((prev) => ({
+          ...prev,
+          [item.message.id]: retryable ? "Saved on this device. Will send when you return." : result.error,
+        }))
+        if (!retryable) {
+          outboxRef.current.delete(clientId)
+          persistOutbox()
+        }
+        return
+      }
+      persistOutbox()
+      setSendNotes((prev) => ({ ...prev, [item.message.id]: "Will retry" }))
+      const timer = window.setTimeout(() => {
+        timersRef.current.delete(clientId)
+        void flushOneRef.current(clientId)
+      }, retryDelayMs(item.attempts))
+      timersRef.current.set(clientId, timer)
+    } catch {
+      item.attempts += 1
+      item.lastError = "Failed to send"
+      if (item.attempts >= OUTBOX_ATTEMPT_LIMIT) {
+        item.paused = true
+        setSendNotes((prev) => ({
+          ...prev,
+          [item.message.id]: "Saved on this device. Will send when you return.",
+        }))
+      } else {
+        const timer = window.setTimeout(() => {
+          timersRef.current.delete(clientId)
+          void flushOneRef.current(clientId)
+        }, retryDelayMs(item.attempts))
+        timersRef.current.set(clientId, timer)
+      }
+      persistOutbox()
+    } finally {
+      flushingRef.current.delete(clientId)
+    }
+  }
+
+  wakeOutboxRef.current = () => {
+    for (const item of outboxRef.current.values()) {
+      if (item.lastError && !isRetryableSendError(item.lastError)) continue
+      item.paused = false
+      void flushOneRef.current(item.clientId)
+    }
+  }
+
+  const queueSend = useCallback((item: QueuedSend) => {
+    outboxRef.current.set(item.clientId, { ...item, attempts: 0, lastError: "", paused: false })
+    persistOutbox()
+    setSendNotes((prev) => ({ ...prev, [item.message.id]: "Sending…" }))
+    void flushOneRef.current(item.clientId)
+  }, [persistOutbox])
+
+  useEffect(() => {
+    if (readOnly) return
+    const stored = readOutbox(sessionId)
+    if (stored.length === 0) return
+    for (const item of stored) outboxRef.current.set(item.clientId, { ...item, paused: false })
+    persistOutbox()
+    setMessages((prev) => {
+      const ids = new Set(prev.map((message) => message.id))
+      const extra = stored
+        .map((item) => item.message)
+        .filter((message) => !ids.has(message.id))
+      return extra.length === 0 ? prev : [...prev, ...extra]
+    })
+    setSendNotes((prev) => {
+      const next = { ...prev }
+      for (const item of stored) next[item.message.id] = "Sending…"
+      return next
+    })
+    wakeOutboxRef.current()
+    return () => {
+      for (const timer of timersRef.current.values()) window.clearTimeout(timer)
+      timersRef.current.clear()
+    }
+  }, [persistOutbox, readOnly, sessionId])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" })
@@ -532,6 +673,7 @@ export default function ChatPanel({
     const supabase = createClient()
     let stopped = false
     let roomReady = false
+    let joinedBefore = false
 
     const refreshPresence = async () => {
       const users = await fetchSessionUsers(supabase, groupId)
@@ -549,14 +691,56 @@ export default function ChatPanel({
       setMessages((prev) => mergeIncomingMessage(prev, rawToMessage(row, prev)))
     }
 
+    const reconcileMessages = async () => {
+      const latest = await fetchSessionMessages(supabase, sessionId)
+      if (stopped || !latest) return
+      setMessages((prev) => withPending(prev, latest))
+    }
+
     const beat = async () => {
-      if (!readOnly) await touchPresence(supabase, groupId, currentUserId)
+      if (document.visibilityState !== "visible") return
+      if (!readOnly) await touchPresence(supabase, groupId, currentUserId, false)
       if (!roomReady) await refreshPresence()
     }
 
     const room = supabase.channel(`conet-room-${sessionId}`, {
       config: { presence: { key: currentUserId } },
     })
+
+    let catching = false
+    let catchAgain = false
+    const catchUp = async () => {
+      if (stopped || document.visibilityState === "hidden") return
+      if (catching) {
+        catchAgain = true
+        return
+      }
+      catching = true
+      try {
+        await refreshRealtimeAuth(supabase)
+        if (!readOnly) {
+          await touchPresence(supabase, groupId, currentUserId, false)
+          if (room.state === "joined") await room.track({ name: currentUserName, seminar: groupName })
+        }
+        await reconcileMessages()
+        await refreshPresence()
+        wakeOutboxRef.current()
+      } catch {
+        // The next wake or the 25s reconcile will try again.
+      } finally {
+        catching = false
+        if (catchAgain && !stopped) {
+          catchAgain = false
+          void catchUp()
+        }
+      }
+    }
+
+    const markAway = async () => {
+      if (readOnly || stopped) return
+      await touchPresence(supabase, groupId, currentUserId, true)
+      if (room.state === "joined") await room.untrack()
+    }
 
     room
       .on(
@@ -594,15 +778,31 @@ export default function ChatPanel({
         if (stopped) return
         roomReady = true
         setLiveUsers(users)
-        setPresenceReady(true)
       })
       .subscribe((status) => {
-        if (status !== "SUBSCRIBED" || stopped) return
-        if (readOnly) {
-          void refreshPresence()
+        if (stopped) return
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          roomReady = false
+          setLinkStatus("reconnecting")
           return
         }
-        void room.track({ name: currentUserName, seminar: groupName }).then(() => beat())
+        if (status !== "SUBSCRIBED") return
+        const recover = joinedBefore
+        joinedBefore = true
+        setLinkStatus("live")
+        if (document.visibilityState === "hidden") return
+        void (async () => {
+          if (!readOnly) {
+            await room.track({ name: currentUserName, seminar: groupName })
+            await touchPresence(supabase, groupId, currentUserId, false)
+          }
+          await refreshPresence()
+          roomReady = true
+          if (recover) {
+            await reconcileMessages()
+            wakeOutboxRef.current()
+          }
+        })()
       })
 
     const presenceTable = supabase
@@ -629,18 +829,39 @@ export default function ChatPanel({
     void beat()
     void refreshPresence()
 
+    const onWake = () => {
+      if (document.visibilityState === "hidden") {
+        setTabHidden(true)
+        void markAway()
+        return
+      }
+      setTabHidden(false)
+      void catchUp()
+    }
+    const onOnline = () => {
+      if (document.visibilityState === "hidden") return
+      void catchUp()
+    }
+    document.addEventListener("visibilitychange", onWake)
+    window.addEventListener("online", onOnline)
+    window.addEventListener("focus", onOnline)
+    const { data: authListener } = supabase.auth.onAuthStateChange((event, session) => {
+      if (stopped || (event !== "TOKEN_REFRESHED" && event !== "SIGNED_IN")) return
+      const token = session?.access_token
+      if (token) void supabase.realtime.setAuth(token)
+      void catchUp()
+    })
+
     const heartbeat = setInterval(() => {
       void beat()
     }, 12000)
     const reconcile = setInterval(() => {
-      void fetchSessionMessages(supabase, sessionId).then((latest) => {
-        if (stopped || !latest) return
-        setMessages((prev) => withPending(prev, latest))
-      })
+      if (document.visibilityState !== "visible") return
+      void reconcileMessages()
       void refreshPresence()
     }, 25000)
     const prune = setInterval(() => {
-      setDbUsers((prev) => prev.filter((user) => Date.now() - user.lastSeen < ONLINE_WINDOW_MS))
+      setDbUsers((prev) => prev.filter((user) => Date.now() - user.lastSeen < AWAY_WINDOW_MS))
     }, 5000)
 
     return () => {
@@ -648,6 +869,10 @@ export default function ChatPanel({
       clearInterval(heartbeat)
       clearInterval(reconcile)
       clearInterval(prune)
+      document.removeEventListener("visibilitychange", onWake)
+      window.removeEventListener("online", onOnline)
+      window.removeEventListener("focus", onOnline)
+      authListener.subscription.unsubscribe()
       supabase.removeChannel(room)
       supabase.removeChannel(presenceTable)
     }
@@ -666,19 +891,30 @@ export default function ChatPanel({
     })
   }, [messages])
 
-  const rosterSource = presenceReady && liveUsers.length > 0 ? liveUsers : dbUsers
-  const online = (rosterSource.length > 0
-    ? rosterSource
-    : readOnly
-      ? []
-      : [{ id: currentUserId, name: currentUserName, lastSeen: Date.now() }]
-  )
-    .slice()
-    .sort((a, b) => {
+  const online = useMemo(() => {
+    const byId = new Map<string, SessionUser>()
+    for (const user of dbUsers) byId.set(user.id, user)
+    for (const user of liveUsers) {
+      byId.set(user.id, { ...user, away: false, lastSeen: Date.now() })
+    }
+    if (!readOnly && !byId.has(currentUserId)) {
+      byId.set(currentUserId, {
+        id: currentUserId,
+        name: currentUserName,
+        lastSeen: Date.now(),
+        away: tabHidden,
+      })
+    }
+    if (!readOnly && tabHidden) {
+      const me = byId.get(currentUserId)
+      if (me) byId.set(currentUserId, { ...me, away: true })
+    }
+    return [...byId.values()].sort((a, b) => {
       if (a.id === currentUserId) return -1
       if (b.id === currentUserId) return 1
       return a.name.localeCompare(b.name)
     })
+  }, [currentUserId, currentUserName, dbUsers, liveUsers, readOnly, tabHidden])
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-white">
@@ -686,9 +922,17 @@ export default function ChatPanel({
         <div className="shrink-0">
           <div className="flex items-center gap-2">
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{groupName}</p>
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-brand-green">
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand-green" />
-              Live
+            <span
+              className={`inline-flex items-center gap-1 text-[11px] font-semibold ${
+                linkStatus === "live" ? "text-brand-green" : "text-amber-600"
+              }`}
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  linkStatus === "live" ? "animate-pulse bg-brand-green" : "bg-amber-500"
+                }`}
+              />
+              {linkStatus === "live" ? "Live" : "Reconnecting"}
             </span>
           </div>
           <h2 className="text-xl font-bold tracking-tight text-slate-900">{sessionTitle}</h2>
@@ -705,12 +949,15 @@ export default function ChatPanel({
             {online.map((person) => (
               <span
                 key={person.id}
-                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 py-1 pl-1 pr-2.5"
-                title={`${person.name} · CoNet Seminar`}
+                className={`inline-flex items-center gap-1.5 rounded-full border bg-slate-50 py-1 pl-1 pr-2.5 ${
+                  person.away ? "border-dashed border-slate-300 opacity-70" : "border-slate-200"
+                }`}
+                title={`${person.name}${person.away ? " · away" : ""} · CoNet Seminar`}
               >
                 <SeminarIcon className="h-6 w-6" iconClassName="h-3 w-3" />
                 <span className="max-w-[9rem] truncate text-xs font-semibold text-slate-700">
                   {person.id === currentUserId ? `${person.name} (you)` : person.name}
+                  {person.away ? " · away" : ""}
                 </span>
               </span>
             ))}
@@ -774,6 +1021,7 @@ export default function ChatPanel({
                     <div className="mt-2 flex items-center justify-between gap-3">
                       <p className={`text-[11px] font-medium ${mine ? "text-white/70" : "text-slate-400"}`}>
                         {msg.name}
+                        {sendNotes[msg.id] ? ` · ${sendNotes[msg.id]}` : ""}
                       </p>
                       {!readOnly && !mine && (
                         <button
@@ -800,17 +1048,13 @@ export default function ChatPanel({
           <p className="text-sm text-slate-500">You are viewing this session. Students write the messages here.</p>
         ) : (
           <ChatInputForm
-            groupId={groupId}
-            sessionId={sessionId}
             currentUserId={currentUserId}
             currentUserName={currentUserName}
             replyingTo={replyingTo}
             onCancelReply={cancelReply}
             newintervene={newintervene}
             onOptimisticSend={handleOptimisticSend}
-            onSendConfirmed={handleSendConfirmed}
-            onSendFailed={handleSendFailed}
-            onThinking={handleThinking}
+            onQueueSend={queueSend}
           />
         )}
       </footer>

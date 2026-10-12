@@ -4,6 +4,10 @@ import { FormEvent, useState } from "react"
 import { useRouter } from "next/navigation"
 import BrandLogo from "@/components/brand-logo"
 import { createClient } from "@/lib/supabase/browser"
+import { INITIAL_STUDENT_PASSWORD } from "@/lib/student-password"
+
+const fieldClass =
+  "h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-900/10"
 
 export default function LoginPage() {
   const router = useRouter()
@@ -12,7 +16,7 @@ export default function LoginPage() {
   const [error, setError] = useState("")
   const [pending, setPending] = useState(false)
 
-  async function onSubmit(event: FormEvent) {
+  async function signIn(event: FormEvent) {
     event.preventDefault()
     setPending(true)
     setError("")
@@ -22,13 +26,14 @@ export default function LoginPage() {
       const message = result.error.message.toLowerCase()
       setError(
         message.includes("confirm")
-          ? "This email still needs to be confirmed in Supabase before it can sign in."
+          ? "This email still needs to be confirmed before it can sign in."
           : "Wrong email or password. Please try again."
       )
       setPending(false)
       return
     }
     router.push("/")
+    router.refresh()
   }
 
   return (
@@ -40,7 +45,7 @@ export default function LoginPage() {
           <p className="mt-1.5 text-sm text-slate-500">Enter your email and password to continue</p>
         </div>
 
-        <form onSubmit={onSubmit} className="space-y-4 px-8 py-7">
+        <form onSubmit={signIn} className="space-y-4 px-8 py-7">
           <div>
             <label className="mb-1.5 block text-sm font-medium text-slate-700" htmlFor="email">
               Email address
@@ -53,7 +58,7 @@ export default function LoginPage() {
               placeholder="your.email@example.com"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-900/10"
+              className={fieldClass}
             />
           </div>
           <div>
@@ -68,12 +73,10 @@ export default function LoginPage() {
               placeholder="Enter your password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3.5 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-2 focus:ring-slate-900/10"
+              className={fieldClass}
             />
           </div>
-          {error && (
-            <p className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
-          )}
+          {error && <p className="rounded-xl border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
           <button
             type="submit"
             disabled={pending}
@@ -85,7 +88,10 @@ export default function LoginPage() {
 
         <div className="border-t border-slate-100 px-8 py-5 text-center text-[11px] leading-relaxed text-slate-400">
           <p>Argue together. Write what the conversation changes.</p>
-          <p className="mt-1">Use the email and password given for your role.</p>
+          <p className="mt-1">
+            Students sign in with <span className="font-semibold text-slate-500">{INITIAL_STUDENT_PASSWORD}</span>. If you
+            forget it, ask your teacher to reset it, then enter that password again.
+          </p>
         </div>
       </div>
     </main>

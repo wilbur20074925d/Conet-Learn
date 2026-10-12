@@ -406,8 +406,12 @@ create table if not exists public."ConetPresence" (
   group_id uuid not null references public."ConetGroups" (id) on delete cascade,
   user_id uuid not null references public."ConetUsers" (id) on delete cascade,
   last_seen timestamptz not null default now(),
+  away boolean not null default false,
   primary key (group_id, user_id)
 );
+
+alter table public."ConetPresence"
+  add column if not exists away boolean not null default false;
 
 create index if not exists "ConetPresence_group_seen_idx"
   on public."ConetPresence" (group_id, last_seen desc);
@@ -441,7 +445,8 @@ create policy "ConetPresence_update" on public."ConetPresence"
     and user_id = public.conet_my_profile_id()
   );
 
-create or replace function public.conet_touch_presence(p_group_id uuid)
+drop function if exists public.conet_touch_presence(uuid);
+create or replace function public.conet_touch_presence(p_group_id uuid, p_away boolean default false)
 returns void
 language plpgsql
 security definer
@@ -460,15 +465,15 @@ begin
     raise exception 'not a group member';
   end if;
 
-  insert into public."ConetPresence" (group_id, user_id, last_seen)
-  values (p_group_id, me, now())
+  insert into public."ConetPresence" (group_id, user_id, last_seen, away)
+  values (p_group_id, me, now(), p_away)
   on conflict (group_id, user_id)
-  do update set last_seen = now();
+  do update set last_seen = now(), away = p_away;
 end;
 $$;
 
-revoke all on function public.conet_touch_presence(uuid) from public;
-grant execute on function public.conet_touch_presence(uuid) to authenticated;
+revoke all on function public.conet_touch_presence(uuid, boolean) from public;
+grant execute on function public.conet_touch_presence(uuid, boolean) to authenticated;
 
 do $$
 begin

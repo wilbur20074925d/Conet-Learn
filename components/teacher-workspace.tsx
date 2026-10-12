@@ -2,9 +2,10 @@
 
 import { useEffect, useRef, useState } from "react"
 import ChatPanel from "@/components/chat-panel"
+import StudentAccounts from "@/components/student-accounts"
 import TeacherBoard from "@/components/teacher-board"
 import { EMPTY_MESSAGES, useSessionBundles } from "@/components/use-session-bundles"
-import type { BoardGroup } from "@/lib/classroom"
+import type { BoardGroup, ClassroomStudent } from "@/lib/classroom"
 import type { Message } from "@/lib/map-messages"
 import { deleteChatSessionNow, writeSessionQuery } from "@/lib/session-browser"
 
@@ -30,6 +31,7 @@ function withoutRemoved(groups: BoardGroup[], removedIds: Set<string>) {
 export default function TeacherWorkspace({
   groups: incomingGroups,
   waiting,
+  students,
   activeSessionId: initialActiveId,
   initialMessages,
   currentUserId,
@@ -37,6 +39,7 @@ export default function TeacherWorkspace({
 }: {
   groups: BoardGroup[]
   waiting: { id: string; name: string }[]
+  students: ClassroomStudent[]
   activeSessionId: string | null
   initialMessages: Message[]
   currentUserId: string
@@ -44,6 +47,7 @@ export default function TeacherWorkspace({
 }) {
   const [groups, setGroups] = useState(incomingGroups)
   const [activeId, setActiveId] = useState(initialActiveId)
+  const [panel, setPanel] = useState<"groups" | "students">("groups")
   const groupsRef = useRef(groups)
   const activeRef = useRef(activeId)
   const removedIds = useRef(new Set<string>())
@@ -111,15 +115,41 @@ export default function TeacherWorkspace({
 
   return (
     <div className="grid min-h-0 flex-1 gap-3 overflow-hidden p-3 lg:grid-cols-[22rem_minmax(0,1fr)]">
-      <div className="conet-surface min-h-0 overflow-hidden">
-        <TeacherBoard
-          groups={groups}
-          waiting={waiting}
-          activeSessionId={active?.id || null}
-          onSelectSession={select}
-          onDeleteSession={remove}
-          onPrefetchSession={prefetch}
-        />
+      <div className="conet-surface flex min-h-0 flex-col overflow-hidden">
+        <div className="flex shrink-0 gap-1 border-b border-slate-100 p-2">
+          <button
+            type="button"
+            onClick={() => setPanel("groups")}
+            className={`h-9 flex-1 rounded-xl text-sm font-semibold transition ${
+              panel === "groups" ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            Groups
+          </button>
+          <button
+            type="button"
+            onClick={() => setPanel("students")}
+            className={`h-9 flex-1 rounded-xl text-sm font-semibold transition ${
+              panel === "students" ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            Students
+          </button>
+        </div>
+        <div className="h-full min-h-0 flex-1 overflow-hidden">
+          {panel === "groups" ? (
+            <TeacherBoard
+              groups={groups}
+              waiting={waiting}
+              activeSessionId={active?.id || null}
+              onSelectSession={select}
+              onDeleteSession={remove}
+              onPrefetchSession={prefetch}
+            />
+          ) : (
+            <StudentAccounts students={students} groups={groups} />
+          )}
+        </div>
       </div>
       <div className="conet-surface min-h-0 overflow-hidden">
         {active ? (

@@ -78,6 +78,7 @@ export default async function Home({
         <TeacherWorkspace
           groups={board.groups}
           waiting={board.waiting}
+          students={board.students}
           activeSessionId={active?.id || null}
           initialMessages={initialMessages}
           currentUserId={ctx.profileId}
