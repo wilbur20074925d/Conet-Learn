@@ -1,59 +1,50 @@
 "use client"
 
 import { FormEvent, useState } from "react"
-import { useRouter } from "next/navigation"
 import { Plus, Trash2 } from "lucide-react"
-import { createChatSession, deleteChatSession } from "@/lib/classroom-actions"
 import type { ChatSession } from "@/lib/classroom"
 
 export default function SessionRail({
-  groupId,
   sessions,
   activeSessionId,
   currentUserId,
+  onSelect,
+  onPrefetch,
+  onCreate,
+  onDelete,
 }: {
-  groupId: string
   sessions: ChatSession[]
   activeSessionId: string | null
   currentUserId: string
+  onSelect: (sessionId: string) => void
+  onPrefetch: (sessionId: string) => void
+  onCreate: (title: string) => Promise<{ ok: true } | { ok: false; error: string }>
+  onDelete: (sessionId: string) => Promise<{ ok: true } | { ok: false; error: string }>
 }) {
-  const router = useRouter()
   const [title, setTitle] = useState("")
-  const [pending, setPending] = useState(false)
+  const [creating, setCreating] = useState(false)
   const [error, setError] = useState("")
 
   async function create(event: FormEvent) {
     event.preventDefault()
     const nextTitle = title.trim()
-    if (!nextTitle || pending) return
-    setPending(true)
-    setError("")
-    const result = await createChatSession(groupId, nextTitle)
-    if (!result.ok) {
-      setError(result.error)
-      setPending(false)
-      return
-    }
+    if (!nextTitle || creating) return
     setTitle("")
-    setPending(false)
-    router.push(`/?session=${result.sessionId}`)
-    router.refresh()
+    setCreating(true)
+    setError("")
+    const result = await onCreate(nextTitle)
+    setCreating(false)
+    if (!result.ok) {
+      setTitle(nextTitle)
+      setError(result.error)
+    }
   }
 
   async function remove(sessionId: string) {
-    if (pending) return
     if (!window.confirm("Delete this chat session and its messages?")) return
-    setPending(true)
     setError("")
-    const result = await deleteChatSession(sessionId)
-    if (!result.ok) {
-      setError(result.error)
-      setPending(false)
-      return
-    }
-    setPending(false)
-    if (sessionId === activeSessionId) router.push("/")
-    router.refresh()
+    const result = await onDelete(sessionId)
+    if (!result.ok) setError(result.error)
   }
 
   return (
@@ -69,26 +60,26 @@ export default function SessionRail({
         {sessions.map((session) => {
           const active = session.id === activeSessionId
           const mine = session.createdBy === currentUserId
+          const pending = session.id.startsWith("temp-")
           return (
             <div key={session.id} className="flex items-center gap-1">
               <button
                 type="button"
-                onClick={() => {
-                  router.push(`/?session=${session.id}`)
-                  router.refresh()
-                }}
+                disabled={pending}
+                onPointerEnter={() => onPrefetch(session.id)}
+                onFocus={() => onPrefetch(session.id)}
+                onClick={() => onSelect(session.id)}
                 className={`min-w-0 flex-1 rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${
                   active ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-50"
-                }`}
+                } ${pending ? "opacity-70" : ""}`}
               >
                 <span className="block truncate">{session.title}</span>
               </button>
-              {mine && (
+              {mine && !pending && (
                 <button
                   type="button"
-                  disabled={pending}
                   onClick={() => remove(session.id)}
-                  className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                  className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
                   aria-label={`Delete ${session.title}`}
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -112,11 +103,11 @@ export default function SessionRail({
         />
         <button
           type="submit"
-          disabled={pending || !title.trim()}
+          disabled={creating || !title.trim()}
           className="mt-2 flex h-10 w-full items-center justify-center gap-1.5 rounded-xl bg-slate-900 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50"
         >
           <Plus className="h-4 w-4" />
-          {pending ? "Saving..." : "Create session"}
+          {creating ? "Creating…" : "Create session"}
         </button>
         {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
       </form>

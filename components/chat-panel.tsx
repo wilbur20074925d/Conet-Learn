@@ -417,6 +417,18 @@ function NateReplyCard({
   )
 }
 
+function withPending(prev: Message[], latest: Message[]) {
+  const temps = prev.filter((message) => isTempMessageId(message.id))
+  if (temps.length === 0) return latest
+  let merged = latest
+  for (const temp of temps) {
+    if (!merged.some((message) => message.user_id === temp.user_id && message.content === temp.content)) {
+      merged = [...merged, temp]
+    }
+  }
+  return merged.sort((a, b) => a.created_at.localeCompare(b.created_at))
+}
+
 function SeminarIcon({ className = "h-9 w-9", iconClassName = "h-4 w-4" }: { className?: string; iconClassName?: string }) {
   return (
     <div
@@ -439,6 +451,8 @@ export default function ChatPanel({
   sessionTitle,
   newintervene,
   readOnly = false,
+  awaitInitial = false,
+  onReady,
 }: {
   initialMessages: Message[]
   currentUserId: string
@@ -449,8 +463,13 @@ export default function ChatPanel({
   sessionTitle: string
   newintervene: number
   readOnly?: boolean
+  awaitInitial?: boolean
+  onReady?: (messages: Message[]) => void
 }) {
   const [messages, setMessages] = useState(initialMessages)
+  const [messagesLoaded, setMessagesLoaded] = useState(!awaitInitial || initialMessages.length > 0)
+  const onReadyRef = useRef(onReady)
+  onReadyRef.current = onReady
   const [replyingTo, setReplyingTo] = useState<Message | null>(null)
   const [liveUsers, setLiveUsers] = useState<SessionUser[]>([])
   const [dbUsers, setDbUsers] = useState<SessionUser[]>([])
@@ -504,6 +523,12 @@ export default function ChatPanel({
   }, [messages.length])
 
   useEffect(() => {
+    if (initialMessages.length === 0) return
+    setMessages((prev) => (prev.length === 0 ? initialMessages : prev))
+    setMessagesLoaded(true)
+  }, [initialMessages])
+
+  useEffect(() => {
     const supabase = createClient()
     let stopped = false
     let roomReady = false
@@ -516,19 +541,7 @@ export default function ChatPanel({
     const applyIncoming = async (messageId: string | undefined) => {
       if (!messageId) {
         const latest = await fetchSessionMessages(supabase, sessionId)
-        if (!stopped && latest) {
-          setMessages((prev) => {
-            const temps = prev.filter((message) => isTempMessageId(message.id))
-            if (temps.length === 0) return latest
-            let merged = latest
-            for (const temp of temps) {
-              if (!merged.some((message) => message.user_id === temp.user_id && message.content === temp.content)) {
-                merged = [...merged, temp]
-              }
-            }
-            return merged.sort((a, b) => a.created_at.localeCompare(b.created_at))
-          })
-        }
+        if (!stopped && latest) setMessages((prev) => withPending(prev, latest))
         return
       }
       const row = await fetchMessageById(supabase, messageId)
@@ -603,6 +616,16 @@ export default function ChatPanel({
       )
       .subscribe()
 
+    void fetchSessionMessages(supabase, sessionId).then((latest) => {
+      if (stopped) return
+      if (!latest) {
+        setMessagesLoaded(true)
+        return
+      }
+      setMessages((prev) => withPending(prev, latest))
+      setMessagesLoaded(true)
+      onReadyRef.current?.(latest)
+    })
     void beat()
     void refreshPresence()
 
@@ -612,17 +635,7 @@ export default function ChatPanel({
     const reconcile = setInterval(() => {
       void fetchSessionMessages(supabase, sessionId).then((latest) => {
         if (stopped || !latest) return
-        setMessages((prev) => {
-          const temps = prev.filter((message) => isTempMessageId(message.id))
-          if (temps.length === 0) return latest
-          let merged = latest
-          for (const temp of temps) {
-            if (!merged.some((message) => message.user_id === temp.user_id && message.content === temp.content)) {
-              merged = [...merged, temp]
-            }
-          }
-          return merged.sort((a, b) => a.created_at.localeCompare(b.created_at))
-        })
+        setMessages((prev) => withPending(prev, latest))
       })
       void refreshPresence()
     }, 25000)
@@ -707,7 +720,14 @@ export default function ChatPanel({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="space-y-4 px-5 py-5">
-          {visibleMessages.length === 0 && (
+          {!messagesLoaded && visibleMessages.length === 0 && (
+            <div className="space-y-3" aria-hidden="true">
+              <div className="h-16 animate-pulse rounded-2xl bg-slate-100" />
+              <div className="ml-10 h-16 animate-pulse rounded-2xl bg-slate-100" />
+              <div className="h-12 w-2/3 animate-pulse rounded-2xl bg-slate-100" />
+            </div>
+          )}
+          {messagesLoaded && visibleMessages.length === 0 && (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-8 text-center">
               <p className="text-lg font-bold tracking-tight text-slate-900">This session is empty.</p>
             </div>

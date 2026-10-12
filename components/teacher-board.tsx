@@ -4,17 +4,23 @@ import { FormEvent, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Trash2 } from "lucide-react"
 import NateModeSwitch from "@/components/nate-mode-switch"
-import { createGroup, deleteChatSession, deleteGroup, moveStudent, removeStudent } from "@/lib/classroom-actions"
+import { createGroup, deleteGroup, moveStudent, removeStudent } from "@/lib/classroom-actions"
 import type { BoardGroup } from "@/lib/classroom"
 
 export default function TeacherBoard({
   groups,
   waiting,
   activeSessionId,
+  onSelectSession,
+  onDeleteSession,
+  onPrefetchSession,
 }: {
   groups: BoardGroup[]
   waiting: { id: string; name: string }[]
   activeSessionId: string | null
+  onSelectSession: (sessionId: string) => void
+  onDeleteSession: (sessionId: string) => Promise<{ ok: true } | { ok: false; error: string }>
+  onPrefetchSession: (sessionId: string) => void
 }) {
   const router = useRouter()
   const [name, setName] = useState("")
@@ -81,19 +87,11 @@ export default function TeacherBoard({
     router.refresh()
   }
 
-  async function onDeleteSession(sessionId: string) {
-    if (pending) return
+  async function onDeleteSessionClick(sessionId: string) {
     if (!window.confirm("Delete this chat session and its messages?")) return
-    setPending(true)
     setError("")
-    const result = await deleteChatSession(sessionId)
-    setPending(false)
-    if (!result.ok) {
-      setError(result.error)
-      return
-    }
-    if (sessionId === activeSessionId) router.push("/")
-    router.refresh()
+    const result = await onDeleteSession(sessionId)
+    if (!result.ok) setError(result.error)
   }
 
   return (
@@ -222,10 +220,9 @@ export default function TeacherBoard({
                       <li key={session.id} className="flex items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => {
-                            router.push(`/?session=${session.id}`)
-                            router.refresh()
-                          }}
+                          onPointerEnter={() => onPrefetchSession(session.id)}
+                          onFocus={() => onPrefetchSession(session.id)}
+                          onClick={() => onSelectSession(session.id)}
                           className={`min-w-0 flex-1 rounded-xl px-3 py-2 text-left text-sm font-semibold transition ${
                             active ? "bg-slate-900 text-white" : "text-slate-700 hover:bg-slate-50"
                           }`}
@@ -234,9 +231,8 @@ export default function TeacherBoard({
                         </button>
                         <button
                           type="button"
-                          disabled={pending}
-                          onClick={() => onDeleteSession(session.id)}
-                          className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                          onClick={() => onDeleteSessionClick(session.id)}
+                          className="rounded-lg p-2 text-slate-400 transition hover:bg-red-50 hover:text-red-600"
                           aria-label={`Delete ${session.title}`}
                         >
                           <Trash2 className="h-3.5 w-3.5" />

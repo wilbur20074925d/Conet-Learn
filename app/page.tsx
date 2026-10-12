@@ -1,12 +1,10 @@
 import { redirect } from "next/navigation"
 import BrandLogo from "@/components/brand-logo"
-import ChatPanel from "@/components/chat-panel"
 import ClassroomHeader from "@/components/classroom-header"
 import ConsentWrapper from "@/components/consent-wrapper"
-import EditorPanel from "@/components/editor-panel"
 import JoinGroup from "@/components/join-group"
-import SessionRail from "@/components/session-rail"
-import TeacherBoard from "@/components/teacher-board"
+import StudentWorkspace from "@/components/student-workspace"
+import TeacherWorkspace from "@/components/teacher-workspace"
 import { getDocument, getSessionContext, getSessionMessages } from "@/lib/actions"
 import { getTeacherBoard, listGroupSessions, listJoinableGroups } from "@/lib/classroom"
 
@@ -27,17 +25,6 @@ function SetupScreen({ message }: { message: string }) {
         <p className="mt-3 text-sm leading-relaxed text-slate-500">{message}</p>
       </div>
     </main>
-  )
-}
-
-function EmptySession({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="flex h-full items-center justify-center px-8 text-center">
-      <div>
-        <p className="text-lg font-bold tracking-tight text-slate-900">{title}</p>
-        <p className="mt-2 text-sm leading-relaxed text-slate-500">{body}</p>
-      </div>
-    </div>
   )
 }
 
@@ -82,36 +69,20 @@ export default async function Home({
       }
     }
 
+    const initialMessages = active ? await getSessionMessages(active.id) : []
+
     return (
       <div className="conet-page-bg flex h-dvh flex-col overflow-hidden text-slate-900">
         <ConsentWrapper userId={ctx.profileId} />
         <ClassroomHeader name={ctx.name} role={ctx.role} />
-        <div className="grid min-h-0 flex-1 gap-3 overflow-hidden p-3 lg:grid-cols-[22rem_minmax(0,1fr)]">
-          <div className="conet-surface min-h-0 overflow-hidden">
-            <TeacherBoard groups={board.groups} waiting={board.waiting} activeSessionId={active?.id || null} />
-          </div>
-          <div className="conet-surface min-h-0 overflow-hidden">
-            {active ? (
-              <ChatPanel
-                key={active.id}
-                initialMessages={await getSessionMessages(active.id)}
-                currentUserId={ctx.profileId}
-                groupId={active.groupId}
-                groupName={active.groupName}
-                sessionId={active.id}
-                sessionTitle={active.title}
-                currentUserName={ctx.name}
-                newintervene={active.newintervene}
-                readOnly
-              />
-            ) : (
-              <EmptySession
-                title="Choose a chat session"
-                body="Open any session under a group to read what the students are writing."
-              />
-            )}
-          </div>
-        </div>
+        <TeacherWorkspace
+          groups={board.groups}
+          waiting={board.waiting}
+          activeSessionId={active?.id || null}
+          initialMessages={initialMessages}
+          currentUserId={ctx.profileId}
+          currentUserName={ctx.name}
+        />
       </div>
     )
   }
@@ -144,39 +115,18 @@ export default async function Home({
     <div className="conet-page-bg flex h-dvh flex-col overflow-hidden text-slate-900">
       <ConsentWrapper userId={ctx.profileId} />
       <ClassroomHeader name={ctx.name} role="student" groupName={ctx.groupName} />
-      <div className="grid min-h-0 flex-1 gap-3 overflow-hidden p-3 lg:grid-cols-[16rem_minmax(0,1fr)_minmax(0,1fr)]">
-        <div className="conet-surface min-h-0 overflow-hidden max-lg:max-h-64">
-          <SessionRail
-            groupId={ctx.groupId}
-            sessions={chats.sessions}
-            activeSessionId={active?.id || null}
-            currentUserId={ctx.profileId}
-          />
-        </div>
-        <div className="conet-surface min-h-0 overflow-hidden">
-          {active ? (
-            <ChatPanel
-              key={active.id}
-              initialMessages={messages}
-              currentUserId={ctx.profileId}
-              groupId={ctx.groupId}
-              groupName={ctx.groupName}
-              sessionId={active.id}
-              sessionTitle={active.title}
-              currentUserName={ctx.name}
-              newintervene={ctx.newintervene}
-            />
-          ) : (
-            <EmptySession
-              title="Create a chat session"
-              body="Your group is set. Add a session on the left, then start the conversation."
-            />
-          )}
-        </div>
-        <div className="conet-surface min-h-0 overflow-hidden">
-          <EditorPanel key={ctx.groupId} initialContent={document} groupId={ctx.groupId} groupMembers={peers} />
-        </div>
-      </div>
+      <StudentWorkspace
+        groupId={ctx.groupId}
+        groupName={ctx.groupName}
+        sessions={chats.sessions}
+        activeSessionId={active?.id || null}
+        initialMessages={messages}
+        currentUserId={ctx.profileId}
+        currentUserName={ctx.name}
+        newintervene={ctx.newintervene}
+        document={document}
+        peers={peers}
+      />
     </div>
   )
 }
