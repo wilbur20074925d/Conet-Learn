@@ -7,7 +7,9 @@ import { createClient } from "./supabase/server"
 import {
   NATE_THINKING,
   NATE_USER_ID,
+  figureDataUrls,
   mentionsNATE,
+  stripFigures,
   normalizeNateMode,
   requestNateReply,
   type NateMode,
@@ -321,10 +323,20 @@ export async function finishNateReply(groupId: string, sessionId: string, thinki
     })
 
   const latestUser = [...history].reverse().find((row) => row.user_id !== NATE_USER_ID)
+  const attached = latestUser ? figureDataUrls(latestUser.content)[0] : undefined
+  const asksAboutFigure = /\b(figure|image|picture|photo|diagram|chart|graph|screenshot)\b/i.test(
+    stripFigures(latestUser?.content || "")
+  )
+  const earlierFigure = attached
+    ? attached
+    : asksAboutFigure
+      ? [...history].reverse().flatMap((row) => figureDataUrls(row.content))[0]
+      : undefined
   const reply = await requestNateReply(
     history,
     latestUser?.content || "Please join our discussion.",
-    mine.newintervene
+    mine.newintervene,
+    earlierFigure ? [earlierFigure] : []
   )
 
   if (!reply) return { success: true }

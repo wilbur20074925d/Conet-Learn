@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { EmojiPicker } from "@/components/ui/emoji-picker"
 import { finishNateReply, type Message } from "@/lib/actions"
 import { mapMessageRows, type RawMessage } from "@/lib/map-messages"
-import { NATE_THINKING, NATE_USER_ID } from "@/lib/nate"
+import { NATE_THINKING, NATE_USER_ID, stripFigures } from "@/lib/nate"
 import {
   AWAY_WINDOW_MS,
   fetchSessionMessages,
@@ -26,11 +26,39 @@ import {
 import { isTempSessionId } from "@/lib/session-browser"
 import { createClient } from "@/lib/supabase/browser"
 import { connectChatRoom, publishChatMessage, renameChatMessage } from "@/lib/yjs/yjsChatChannel"
-import { BookOpen, Check, Copy, Reply, SendHorizonal, X } from "lucide-react"
+import { BookOpen, Check, Copy, ImagePlus, Reply, SendHorizonal, X } from "lucide-react"
 
 type MentionPerson = {
   id: string
   name: string
+}
+
+function compressFigure(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const image = new Image()
+    image.onload = () => {
+      const maxSide = 1024
+      const scale = Math.min(1, maxSide / Math.max(image.width, image.height))
+      const canvas = document.createElement("canvas")
+      canvas.width = Math.max(1, Math.round(image.width * scale))
+      canvas.height = Math.max(1, Math.round(image.height * scale))
+      const context = canvas.getContext("2d")
+      if (!context) {
+        URL.revokeObjectURL(url)
+        reject(new Error("Could not read that image"))
+        return
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height)
+      URL.revokeObjectURL(url)
+      resolve(canvas.toDataURL("image/jpeg", 0.72))
+    }
+    image.onerror = () => {
+      URL.revokeObjectURL(url)
+      reject(new Error("Could not read that image"))
+    }
+    image.src = url
+  })
 }
 
 function readMention(value: string, cursor: number) {
@@ -63,7 +91,11 @@ const ChatInputForm = memo(function ChatInputForm({
   const [inputValue, setInputValue] = useState("")
   const [mention, setMention] = useState<{ query: string; start: number } | null>(null)
   const [activeIndex, setActiveIndex] = useState(0)
+  const [figure, setFigure] = useState<{ name: string; url: string } | null>(null)
+  const [figureError, setFigureError] = useState("")
+  const [figureBusy, setFigureBusy] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
 
   useEffect(() => {
@@ -128,10 +160,36 @@ const ChatInputForm = memo(function ChatInputForm({
     })
   }
 
+  const chooseFigure = async (file: File | undefined) => {
+    if (!file) return
+    if (!file.type.startsWith("image/")) {
+      setFigureError("Choose an image file.")
+      return
+    }
+    if (file.size > 8 * 1024 * 1024) {
+      setFigureError("That image is larger than 8 MB.")
+      return
+    }
+    setFigureBusy(true)
+    setFigureError("")
+    try {
+      const url = await compressFigure(file)
+      setFigure({ name: file.name || "Figure", url })
+    } catch {
+      setFigure(null)
+      setFigureError("Could not read that image.")
+    } finally {
+      setFigureBusy(false)
+      if (fileRef.current) fileRef.current.value = ""
+    }
+  }
+
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
-    const content = inputValue.trim()
-    if (!content) return
+    const typed = inputValue.trim()
+    if (figureBusy || (!typed && !figure)) return
+    const caption = typed || "Shared a figure."
+    const content = figure ? `${caption}\n\n![figure](${figure.url})` : caption
 
     const clientId = crypto.randomUUID()
     const reply = replyingTo
@@ -151,6 +209,8 @@ const ChatInputForm = memo(function ChatInputForm({
     }
 
     setInputValue("")
+    setFigure(null)
+    setFigureError("")
     setMention(null)
     onCancelReply()
     onOptimisticSend(optimistic)
@@ -170,7 +230,7 @@ const ChatInputForm = memo(function ChatInputForm({
           <div className="flex min-w-0 items-center gap-2 text-sm text-slate-600">
             <Reply className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate">
-              Reply to {replyingTo.name}: {replyingTo.content.slice(0, 80)}
+              Reply to {replyingTo.name}: {(stripFigures(replyingTo.content) || "Shared a figure").slice(0, 80)}
             </span>
           </div>
           <button type="button" onClick={onCancelReply} className="rounded-full p-1 text-slate-400 hover:bg-white hover:text-slate-700">
@@ -178,7 +238,42 @@ const ChatInputForm = memo(function ChatInputForm({
           </button>
         </div>
       )}
+      {figure && (
+        <div className="mb-3 flex items-center gap-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+          <img src={figure.url} alt="" className="h-14 w-14 rounded-lg bg-white object-cover" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium text-slate-800">{figure.name}</p>
+            <p className="text-xs text-slate-500">Mention @NATE to ask Nate to read this figure.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setFigure(null)}
+            className="rounded-full p-1 text-slate-400 hover:bg-white hover:text-slate-700"
+            aria-label="Remove figure"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      )}
+      {figureError && <p className="mb-2 text-xs font-medium text-red-600">{figureError}</p>}
       <form onSubmit={submit} className="flex items-center gap-2">
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          className="hidden"
+          onChange={(event) => void chooseFigure(event.target.files?.[0])}
+        />
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={figureBusy}
+          className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 hover:text-slate-900 disabled:opacity-50"
+          aria-label="Upload a figure"
+          title="Upload a figure"
+        >
+          <ImagePlus className="h-4 w-4" />
+        </button>
         <div className="relative flex-1">
           {mention && suggestions.length === 0 && (
             <div className="absolute bottom-full left-0 z-20 mb-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 shadow-lg">
@@ -274,9 +369,11 @@ const ChatInputForm = memo(function ChatInputForm({
             }}
             onBlur={() => setMention(null)}
             placeholder={
-              replyingTo
-                ? `Reply to ${replyingTo.name}...`
-                : "Write to your group, or type @ to mention someone"
+              figure
+                ? "Ask @NATE to read this figure..."
+                : replyingTo
+                  ? `Reply to ${replyingTo.name}...`
+                  : "Write to your group, or type @ to mention someone"
             }
             autoComplete="off"
             className="h-11 rounded-xl border-slate-200 bg-white pr-12 shadow-none focus-visible:ring-slate-900/20"
@@ -299,7 +396,7 @@ const ChatInputForm = memo(function ChatInputForm({
         <Button
           type="submit"
           size="icon"
-          disabled={!inputValue.trim()}
+          disabled={figureBusy || (!inputValue.trim() && !figure)}
           className="h-11 w-11 rounded-xl bg-slate-900 text-white hover:bg-slate-800"
         >
           <SendHorizonal className="h-4 w-4" />
@@ -552,7 +649,32 @@ function splitCodeFences(raw: string) {
   return parts
 }
 
+function splitFigures(raw: string) {
+  const parts: Array<{ type: "text"; text: string } | { type: "figure"; alt: string; src: string }> = []
+  const pattern = /!\[([^\]]*)\]\((data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+|https:\/\/[^\s)]+)\)/g
+  let last = 0
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(raw))) {
+    if (match.index > last) parts.push({ type: "text", text: raw.slice(last, match.index) })
+    parts.push({ type: "figure", alt: match[1], src: match[2] })
+    last = match.index + match[0].length
+  }
+  const rest = raw.slice(last)
+  if (rest) parts.push({ type: "text", text: rest })
+  return parts
+}
+
+function renderFigure(alt: string, src: string) {
+  return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt || "Figure")}" class="mt-2 max-h-72 w-full rounded-lg bg-white object-contain" />`
+}
+
 function renderInlineMarkdown(raw: string, mentionNames: string[]) {
+  return splitFigures(raw)
+    .map((part) => (part.type === "figure" ? renderFigure(part.alt, part.src) : renderTextMarkdown(part.text, mentionNames)))
+    .join("")
+}
+
+function renderTextMarkdown(raw: string, mentionNames: string[]) {
   let text = highlightMentions(escapeHtml(raw), mentionNames)
   text = text.replace(/^###\s*(.+)$/gm, '<h3 class="mt-2 mb-1 text-sm font-semibold">$1</h3>')
   text = text.replace(/^##\s*(.+)$/gm, '<h2 class="mt-3 mb-1 text-base font-semibold">$1</h2>')
@@ -761,7 +883,7 @@ function NateReplyCard({
           {quote && (
             <div className="mb-2 border-l-2 border-slate-300 pl-2 text-xs text-slate-500">
               <p className="font-medium">{quote.user_name}</p>
-              <p className="truncate">{quote.content}</p>
+              <p className="truncate">{stripFigures(quote.content) || "Shared a figure"}</p>
             </div>
           )}
           {typing ? (
@@ -1495,7 +1617,7 @@ export default function ChatPanel({
                     {msg.original_message && (
                       <div className={`mb-2 border-l-2 pl-2 text-xs ${mine ? "border-white/40 text-white/80" : "border-slate-300 text-slate-500"}`}>
                         <p className="font-medium">{msg.original_message.user_name}</p>
-                        <p className="truncate">{msg.original_message.content}</p>
+                        <p className="truncate">{stripFigures(msg.original_message.content) || "Shared a figure"}</p>
                       </div>
                     )}
                     <MessageContent content={msg.content} mentionNames={mentionNames} />

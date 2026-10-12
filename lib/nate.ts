@@ -25,6 +25,7 @@ Socially Shared Regulated Learning (SSRL) integration:
 - Emphasize shared responsibility for learning outcomes
 
 Communication guidelines:
+- When a figure is attached, read what is visible in it and respond to the question about that figure.
 - Keep responses concise and natural - aim for brevity, never exceed 100 words unless students specifically request longer responses.
 - Focus on one main idea or perspective per response.
 - Never use numbered lists, bullet points, or multiple separate points unless the user specifically requests it.
@@ -47,16 +48,38 @@ export function mentionsNATE(message: string): boolean {
   return message.toLowerCase().includes("@nate")
 }
 
+const FIGURE_URL = /!\[[^\]]*\]\((data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+)\)/g
+
+export function figureDataUrls(content: string): string[] {
+  return [...content.matchAll(new RegExp(FIGURE_URL.source, "g"))].map((match) => match[1])
+}
+
+export function stripFigures(content: string): string {
+  return content
+    .replace(/!\[[^\]]*\]\((?:data:image\/[^)]+|https:\/\/[^)\s]+)\)/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+}
+
 type HistoryTurn = {
   user_id: string
   name: string
   content: string
 }
 
+type ChatContent =
+  | string
+  | Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string } }
+    >
+
 export async function requestNateReply(
   history: HistoryTurn[],
   userMessage: string,
-  mode: NateMode
+  mode: NateMode,
+  figures: string[] = []
 ): Promise<string> {
   const apiKey = process.env.VITE_ZENMUX_API_KEY
   if (!apiKey) {
@@ -66,14 +89,24 @@ export async function requestNateReply(
     return ""
   }
 
-  const conversation = history
+  const conversation: Array<{ role: string; content: ChatContent }> = history
     .filter((msg) => msg.content !== NATE_THINKING)
     .map((msg) => ({
       role: msg.user_id === NATE_USER_ID ? "assistant" : "user",
-      content: `${msg.name}: ${msg.content}`,
+      content: `${msg.name}: ${stripFigures(msg.content) || "shared a figure."}`,
     }))
 
-  conversation.push({ role: "user", content: userMessage })
+  const asked = stripFigures(userMessage) || "Please read this figure and tell us what you notice."
+  const question = figures.length
+    ? `${asked}\n\nA figure is attached. Read what is visible in it, then respond to the question.`
+    : asked
+  const latest: ChatContent = figures.length
+    ? [
+        { type: "text", text: question },
+        ...figures.slice(0, 1).map((url) => ({ type: "image_url" as const, image_url: { url } })),
+      ]
+    : question
+  conversation.push({ role: "user", content: latest })
 
   const messages =
     mode === 1
@@ -85,7 +118,7 @@ export async function requestNateReply(
     messages,
     temperature: 0.7,
   }
-  if (mode === 1) body.max_tokens = 200
+  if (mode === 1) body.max_tokens = figures.length ? 450 : 200
 
   try {
     const response = await fetch("https://zenmux.ai/api/v1/chat/completions", {
