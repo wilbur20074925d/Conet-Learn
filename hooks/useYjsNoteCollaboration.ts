@@ -26,6 +26,7 @@ export interface UseYjsNoteCollaborationOptions {
   /** Initial title / HTML from Supabase (legacy seed). */
   seedTitle?: string;
   seedHtml?: string;
+  silent?: boolean;
 }
 
 export function useYjsNoteCollaboration(options: UseYjsNoteCollaborationOptions) {
@@ -37,6 +38,7 @@ export function useYjsNoteCollaboration(options: UseYjsNoteCollaborationOptions)
     enabled = true,
     seedTitle = '',
     seedHtml = '',
+    silent = false,
   } = options;
 
   const [isConnected, setIsConnected] = useState(false);
@@ -70,10 +72,11 @@ export function useYjsNoteCollaboration(options: UseYjsNoteCollaborationOptions)
       userId,
       userName,
       color,
+      silent,
     });
     serviceRef.current = service;
     service.connect();
-    service.seedIfEmpty({ title: seedTitle, htmlOrText: seedHtml });
+    if (!silent) service.seedIfEmpty({ title: seedTitle, htmlOrText: seedHtml });
 
     setYdoc(service.getDoc());
     setFragment(service.getFragment());
@@ -88,12 +91,11 @@ export function useYjsNoteCollaboration(options: UseYjsNoteCollaborationOptions)
     const unsubSync = service.onSyncChange((synced) => {
       setIsSynced(synced);
       if (synced) {
-        // Repair any already-duplicated titles after peers merge
-        service.seedIfEmpty({ title: seedTitle, htmlOrText: seedHtml });
+        if (!silent) service.seedIfEmpty({ title: seedTitle, htmlOrText: seedHtml });
         setTitleState(collapseRepeatedTitle(service.getTitle() || seedTitle));
-        const seed = getSeedHtml(service.getDoc());
-        if (seed) {
-          setSeedHtmlOnce(seed);
+        if (!silent) {
+          const seed = getSeedHtml(service.getDoc());
+          if (seed) setSeedHtmlOnce(seed);
         }
         setComments(service.getComments());
         setCollaborators(service.getCollaborators());
@@ -122,7 +124,7 @@ export function useYjsNoteCollaboration(options: UseYjsNoteCollaborationOptions)
     };
     // seed only used on connect
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, noteId, userId, userName, wsUrl, color]);
+  }, [enabled, noteId, userId, userName, wsUrl, color, silent]);
 
   const setTitle = useCallback((next: string) => {
     setTitleState(next);

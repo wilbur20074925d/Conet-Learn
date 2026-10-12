@@ -6,6 +6,7 @@
 
 import { useCallback, useEffect, useState, useTransition } from "react"
 import { DocumentSessionLoader } from "@/components/collaborative-docs/DocumentSessionLoader"
+import { GroupPostBoard } from "@/components/collaborative-docs/group-post-history"
 import { NoteWorkspaceEditor } from "@/components/collaborative-docs/NoteWorkspaceEditor"
 import {
   ensureCollaborativeNote,
@@ -18,11 +19,13 @@ export default function CollaborativeDocumentationPanel({
   currentUserId,
   currentUserName,
   initialNotes = [],
+  readOnly = false,
 }: {
   groupId: string
   currentUserId: string
   currentUserName: string
   initialNotes?: CollaborativeNote[]
+  readOnly?: boolean
 }) {
   const initial = [...initialNotes].sort((a, b) => a.created_at.localeCompare(b.created_at))[0] ?? null
   const [note, setNote] = useState<CollaborativeNote | null>(initial)
@@ -30,7 +33,7 @@ export default function CollaborativeDocumentationPanel({
   const [, startTransition] = useTransition()
 
   useEffect(() => {
-    if (note) return
+    if (note || readOnly) return
     let cancelled = false
     ;(async () => {
       const result = await ensureCollaborativeNote(groupId)
@@ -44,7 +47,7 @@ export default function CollaborativeDocumentationPanel({
     return () => {
       cancelled = true
     }
-  }, [groupId, note])
+  }, [groupId, note, readOnly])
 
   const persistMeta = useCallback((noteId: string, patch: Partial<CollaborativeNote>) => {
     setNote((current) =>
@@ -64,7 +67,16 @@ export default function CollaborativeDocumentationPanel({
   if (!note) {
     return (
       <section className="flex h-full min-h-0 flex-col overflow-hidden bg-white">
-        {error ? (
+        {readOnly ? (
+          <div className="flex h-full items-center justify-center px-8 text-center">
+            <div>
+              <p className="text-lg font-bold tracking-tight text-slate-900">No group post yet</p>
+              <p className="mt-2 text-sm leading-relaxed text-slate-500">
+                The shared document appears when a student opens Group Post.
+              </p>
+            </div>
+          </div>
+        ) : error ? (
           <p className="px-6 py-4 text-center text-sm text-red-600">{error}</p>
         ) : (
           <DocumentSessionLoader
@@ -80,12 +92,14 @@ export default function CollaborativeDocumentationPanel({
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden bg-white text-neutral-950">
       <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {readOnly && <GroupPostBoard groupId={groupId} />}
         <NoteWorkspaceEditor
           key={note.id}
           note={note}
           currentUser={{ id: currentUserId, name: currentUserName }}
           minHeight="calc(100vh - 12rem)"
-          onNoteMetaChange={(patch) => persistMeta(note.id, patch)}
+          onNoteMetaChange={readOnly ? undefined : (patch) => persistMeta(note.id, patch)}
+          readOnly={readOnly}
         />
       </div>
     </section>

@@ -235,7 +235,10 @@ end $$;
 
 drop policy if exists "ConetDocuments_select" on public."ConetDocuments";
 create policy "ConetDocuments_select" on public."ConetDocuments"
-  for select to authenticated using (user_id = public.conet_my_profile_id());
+  for select to authenticated using (
+    user_id = public.conet_my_profile_id()
+    or public.conet_am_teacher()
+  );
 
 drop policy if exists "ConetDocuments_insert" on public."ConetDocuments";
 create policy "ConetDocuments_insert" on public."ConetDocuments"
@@ -249,7 +252,10 @@ create policy "ConetDocuments_update" on public."ConetDocuments"
 
 drop policy if exists "ConetDocumentHistory_select" on public."ConetDocumentHistory";
 create policy "ConetDocumentHistory_select" on public."ConetDocumentHistory"
-  for select to authenticated using (user_id = public.conet_my_profile_id());
+  for select to authenticated using (
+    user_id = public.conet_my_profile_id()
+    or public.conet_am_teacher()
+  );
 
 drop policy if exists "ConetDocumentHistory_insert" on public."ConetDocumentHistory";
 create policy "ConetDocumentHistory_insert" on public."ConetDocumentHistory"

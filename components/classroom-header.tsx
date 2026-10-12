@@ -1,17 +1,52 @@
 "use client"
 
-import { Lock, LogOut } from "lucide-react"
+import { useEffect, useRef, useState, type ReactNode } from "react"
+import { ArrowLeft, PenLine, Users } from "lucide-react"
 import BrandLogo from "@/components/brand-logo"
-import { Button } from "@/components/ui/button"
+import PendingLink from "@/components/pending-link"
+import LogoutButton from "@/components/logout-button"
+import SessionMaterialsButton from "@/components/session-materials-button"
 import type { StudentWorkspaceMode } from "@/components/student-workspace"
-import { logout } from "@/lib/auth.actions"
 import { cn } from "@/lib/utils"
+
+const STUDENT_NOTES = [
+  "You're doing great.",
+  "Keep those ideas coming.",
+  "Your group is lucky to have you.",
+  "Stay with it.",
+]
+
+const TEACHER_NOTES = [
+  "The class is in good hands.",
+  "Your students can do this.",
+  "A calm start makes a good lesson.",
+]
+
+function greetingFor(date: Date) {
+  const hour = date.getHours()
+  if (hour < 12) return "Good morning"
+  if (hour < 17) return "Good afternoon"
+  return "Good evening"
+}
+
+function firstName(name: string) {
+  return name.trim().split(/\s+/)[0] || name
+}
+
+function initialOf(name: string) {
+  const letter = name.trim().charAt(0)
+  return letter ? letter.toUpperCase() : "?"
+}
 
 export default function ClassroomHeader({
   name,
   role,
   groupName,
   showWorkspaceNav = false,
+  showDashboardLink = false,
+  onDashboardBack,
+  showMaterials = true,
+  materialsSessionId,
   workspaceMode = "group-project",
   onWorkspaceModeChange,
 }: {
@@ -19,79 +54,168 @@ export default function ClassroomHeader({
   role: "teacher" | "student" | "ai"
   groupName?: string | null
   showWorkspaceNav?: boolean
+  showDashboardLink?: boolean
+  onDashboardBack?: () => void
+  showMaterials?: boolean
+  materialsSessionId?: string | null
   workspaceMode?: StudentWorkspaceMode
   onWorkspaceModeChange?: (mode: StudentWorkspaceMode) => void
 }) {
-  return (
-    <header className="border-b border-slate-200/80 bg-white/80 backdrop-blur-md">
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-3">
-        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3">
-          <BrandLogo priority className="h-16 w-auto" />
-          <div className="min-w-0">
-            <p className="text-xs text-slate-500">
-              {name}
-              <span className="mx-1.5 text-slate-300">/</span>
-              {role === "teacher" ? "Teacher" : "Student"}
-              {groupName && (
-                <>
-                  <span className="mx-1.5 text-slate-300">/</span>
-                  <span className="inline-flex items-center gap-1">
-                    <Lock className="h-3 w-3 text-slate-400" />
-                    {groupName}
-                  </span>
-                </>
-              )}
-            </p>
-            {role === "student" && groupName && (
-              <p className="mt-0.5 text-[11px] text-slate-400">
-                Your teacher is the only person who can move you to another group.
-              </p>
-            )}
-          </div>
+  const isTeacher = role === "teacher"
+  const [hello, setHello] = useState("Hello")
+  const [note, setNote] = useState<string | null>(null)
+  const [noteId, setNoteId] = useState(0)
+  const noteIndex = useRef(0)
+  const timer = useRef<number | null>(null)
 
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {showWorkspaceNav && onWorkspaceModeChange && (
-            <nav className="flex items-center rounded-xl border border-slate-200 bg-slate-50 p-1">
+  useEffect(() => {
+    setHello(greetingFor(new Date()))
+    return () => {
+      if (timer.current) window.clearTimeout(timer.current)
+    }
+  }, [])
+
+  function encourage() {
+    const lines = isTeacher ? TEACHER_NOTES : STUDENT_NOTES
+    setNote(lines[noteIndex.current % lines.length])
+    noteIndex.current += 1
+    setNoteId((id) => id + 1)
+    if (timer.current) window.clearTimeout(timer.current)
+    timer.current = window.setTimeout(() => setNote(null), 2200)
+  }
+
+  const label = note ?? `${hello}, ${firstName(name)}`
+
+  return (
+    <header className="relative z-30 shrink-0 border-b border-slate-200/80 bg-white/95 backdrop-blur-md">
+      <div className="flex h-16 items-center gap-2 px-3 sm:gap-3 sm:px-5">
+        <div className="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden sm:gap-3">
+          {showDashboardLink &&
+            (onDashboardBack ? (
               <button
                 type="button"
-                onClick={() => onWorkspaceModeChange("in-class")}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition",
-                  workspaceMode === "in-class"
-                    ? "bg-neutral-950 text-white shadow-sm"
-                    : "text-slate-600 hover:bg-white hover:text-slate-900"
-                )}
+                onClick={onDashboardBack}
+                className="group inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-2.5 text-xs font-semibold text-white shadow-sm transition duration-200 hover:-translate-y-px hover:bg-slate-800 active:scale-[0.98] sm:px-3"
               >
-                Individual Note
+                <ArrowLeft className="h-3.5 w-3.5 transition duration-200 group-hover:-translate-x-0.5" />
+                <span className="hidden sm:inline">Back</span>
               </button>
-              <button
-                type="button"
-                onClick={() => onWorkspaceModeChange("group-project")}
-                className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition",
-                  workspaceMode === "group-project"
-                    ? "bg-neutral-950 text-white shadow-sm"
-                    : "text-slate-600 hover:bg-white hover:text-slate-900"
-                )}
+            ) : (
+              <PendingLink
+                href="/dashboard"
+                className="group inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-2.5 text-xs font-semibold text-white shadow-sm transition duration-200 hover:-translate-y-px hover:bg-slate-800 active:scale-[0.98] sm:px-3"
               >
-                Group Post
-              </button>
-            </nav>
+                <ArrowLeft className="h-3.5 w-3.5 transition duration-200 group-hover:-translate-x-0.5" />
+                <span className="hidden sm:inline">Back</span>
+              </PendingLink>
+            ))}
+          <BrandLogo priority className="h-11 w-auto shrink-0 transition duration-200 hover:scale-[1.03] sm:h-12" />
+          <button
+            type="button"
+            onClick={encourage}
+            title={isTeacher ? "Tap for a note" : "Tap for a cheer"}
+            className="group flex h-9 min-w-0 items-center gap-2 overflow-hidden rounded-full border border-slate-200 bg-white py-1 pl-1 pr-3 text-left shadow-sm transition duration-200 hover:-translate-y-px hover:border-slate-300 hover:shadow-md active:scale-[0.99]"
+          >
+            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[11px] font-bold text-white transition duration-200 group-hover:scale-105 group-active:scale-95">
+              {initialOf(name)}
+            </span>
+            <span key={note ? noteId : "hello"} className="truncate text-sm font-semibold text-slate-900 animate-in fade-in duration-300">
+              {label}
+            </span>
+            <span className="hidden shrink-0 text-xs text-slate-400 sm:inline">/</span>
+            <span className="hidden shrink-0 text-xs font-medium text-slate-500 sm:inline">
+              {isTeacher ? "Teacher" : "Student"}
+            </span>
+            {groupName && (
+              <>
+                <span className="hidden shrink-0 text-xs text-slate-300 md:inline">/</span>
+                <span className="hidden min-w-0 truncate text-xs font-medium text-slate-500 md:inline">{groupName}</span>
+              </>
+            )}
+          </button>
+          {note && (
+            <span className="sr-only" role="status">
+              {note}
+            </span>
           )}
-          <form action={logout}>
-            <Button
-              type="submit"
-              variant="outline"
-              size="sm"
-              className="h-8 rounded-xl border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
-            >
-              <LogOut className="mr-1.5 h-3.5 w-3.5" />
-              Logout
-            </Button>
-          </form>
+        </div>
+
+        {showWorkspaceNav && onWorkspaceModeChange && (
+          <WorkspaceSwitch mode={workspaceMode} onChange={onWorkspaceModeChange} />
+        )}
+
+        <div className="flex shrink-0 items-center gap-2">
+          {showMaterials && <SessionMaterialsButton role={role} sessionId={materialsSessionId || "current"} />}
+          <LogoutButton />
         </div>
       </div>
     </header>
+  )
+}
+
+function WorkspaceSwitch({
+  mode,
+  onChange,
+}: {
+  mode: StudentWorkspaceMode
+  onChange: (mode: StudentWorkspaceMode) => void
+}) {
+  return (
+    <nav
+      aria-label="Workspace"
+      className="relative grid h-9 w-[9.5rem] shrink-0 grid-cols-2 items-center rounded-xl border border-slate-200 bg-slate-50 p-1 md:w-[18.5rem]"
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "absolute bottom-1 left-1 top-1 w-[calc(50%-0.25rem)] rounded-lg bg-neutral-950 shadow-sm transition-transform duration-300 ease-out motion-reduce:transition-none",
+          mode === "group-project" && "translate-x-full"
+        )}
+      />
+      <SwitchButton
+        active={mode === "in-class"}
+        label="Individual Note"
+        shortLabel="Note"
+        icon={<PenLine className="h-3.5 w-3.5" />}
+        onClick={() => onChange("in-class")}
+      />
+      <SwitchButton
+        active={mode === "group-project"}
+        label="Group Post"
+        shortLabel="Post"
+        icon={<Users className="h-3.5 w-3.5" />}
+        onClick={() => onChange("group-project")}
+      />
+    </nav>
+  )
+}
+
+function SwitchButton({
+  active,
+  label,
+  shortLabel,
+  icon,
+  onClick,
+}: {
+  active: boolean
+  label: string
+  shortLabel: string
+  icon: ReactNode
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        "relative z-10 inline-flex h-7 items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-xs font-semibold transition duration-200 active:scale-[0.98] sm:px-3",
+        active ? "text-white" : "text-slate-600 hover:text-slate-900"
+      )}
+    >
+      <span className={cn("transition duration-200", active && "-rotate-6")}>{icon}</span>
+      <span className="md:hidden">{shortLabel}</span>
+      <span className="hidden md:inline">{label}</span>
+    </button>
   )
 }

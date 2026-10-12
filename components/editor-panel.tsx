@@ -1,10 +1,18 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import { History } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { Textarea } from "@/components/ui/textarea"
 import InspiredByButton from "@/components/inspired-by-button"
-import { saveDocumentSnapshot, submitFinalDocument } from "@/lib/actions"
+import { listMyNoteSubmissions, saveDocumentSnapshot, submitFinalDocument } from "@/lib/actions"
 
 type SaveStatus = "idle" | "saving" | "saved" | "error"
 
@@ -22,6 +30,19 @@ interface StructuredContent {
 
 function wordCount(text: string) {
   return text.trim().split(/\s+/).filter(Boolean).length
+}
+
+function submittedAt(iso: string) {
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return ""
+  return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+}
+
+type PastSubmission = {
+  id: string
+  concept1: string
+  concept2: string
+  createdAt: string
 }
 
 function localKey(groupId: string) {
@@ -80,7 +101,11 @@ export default function EditorPanel({
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [submitStatus, setSubmitStatus] = useState<"idle" | "success" | "error">("idle")
+  const [submitError, setSubmitError] = useState("")
+  const [successOpen, setSuccessOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [submissions, setSubmissions] = useState<PastSubmission[]>([])
+  const [selectedSubmission, setSelectedSubmission] = useState<PastSubmission | null>(null)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hydrated = useRef(false)
   const latestRef = useRef(structuredContent)
@@ -111,9 +136,10 @@ export default function EditorPanel({
     if (result?.success) {
       setSaveStatus("saved")
       setHasUnsavedChanges(false)
-    } else {
-      setSaveStatus("error")
+      return true
     }
+    setSaveStatus("error")
+    return false
   }
 
   function debouncedSnapshotSave(next: StructuredContent) {
@@ -165,22 +191,40 @@ export default function EditorPanel({
     updateField(field, current ? `${current} ${note}` : note)
   }
 
+  async function refreshSubmissions() {
+    const result = await listMyNoteSubmissions(groupId)
+    if (!result.error) setSubmissions(result.submissions)
+  }
+
+  useEffect(() => {
+    void refreshSubmissions()
+  }, [groupId])
+
   async function handleSubmitFinal() {
     setIsSubmitting(true)
-    setSubmitStatus("idle")
+    setSubmitError("")
     if (timerRef.current) {
       clearTimeout(timerRef.current)
       timerRef.current = null
     }
-    await persistNow(structuredContent)
-    const result = await submitFinalDocument(groupId)
-    setSubmitStatus(result.error ? "error" : "success")
-    setIsSubmitting(false)
-    if (!result.error) {
-      setSaveStatus("saved")
-      setHasUnsavedChanges(false)
-      setTimeout(() => setSubmitStatus("idle"), 3000)
+    const stamped = { ...structuredContent, savedAt: new Date().toISOString() }
+    const payload = toPayload(stamped)
+    try {
+      window.localStorage.setItem(localKey(groupId), payload)
+    } catch {
+      // The server copy is the one that is submitted.
     }
+    const result = await submitFinalDocument(groupId, payload)
+    setIsSubmitting(false)
+    if ("error" in result) {
+      setSubmitError(result.error)
+      return
+    }
+    setStructuredContent(stamped)
+    setSaveStatus("saved")
+    setHasUnsavedChanges(false)
+    setSubmissions((current) => [result.submission, ...current.filter((item) => item.id !== result.submission.id)])
+    setSuccessOpen(true)
   }
 
   const statusLabel =
@@ -191,9 +235,27 @@ export default function EditorPanel({
       <header className="flex shrink-0 items-center justify-between gap-3 border-b border-neutral-200 px-4 py-2.5">
         <div className="min-w-0">
           <h2 className="truncate text-base font-bold tracking-tight">Your essay</h2>
-          <p className="truncate text-xs text-neutral-500">Both parts stay on screen. Autosaves as you type.</p>
+          <p className="truncate text-xs text-neutral-500">Your writing stays here. Submit again whenever you want.</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <button
+            type="button"
+            aria-label="Previous submissions"
+            title="Previous submissions"
+            onClick={() => {
+              setSelectedSubmission(null)
+              setHistoryOpen(true)
+              void refreshSubmissions()
+            }}
+            className="relative inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-200 bg-white text-neutral-600 transition hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-950"
+          >
+            <History className="h-3.5 w-3.5" />
+            {submissions.length > 0 && (
+              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-neutral-950 px-1 text-[9px] font-semibold leading-none text-white">
+                {submissions.length}
+              </span>
+            )}
+          </button>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 px-2.5 py-1 text-[11px] font-semibold text-neutral-700">
             <span
               className={`h-1.5 w-1.5 rounded-full ${
@@ -208,16 +270,11 @@ export default function EditorPanel({
             disabled={isSubmitting}
             className="h-8 rounded-lg bg-neutral-950 px-3.5 text-xs font-semibold text-white hover:bg-neutral-800"
           >
-            {isSubmitting
-              ? "Submitting..."
-              : submitStatus === "success"
-                ? "Submitted"
-                : submitStatus === "error"
-                  ? "Try again"
-                  : "Submit final"}
+            {isSubmitting ? "Submitting..." : "Submit"}
           </Button>
         </div>
       </header>
+      {submitError && <p className="shrink-0 px-4 pt-2 text-xs font-medium text-red-600">{submitError}</p>}
 
       <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden p-2.5">
         <article className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-neutral-900/15 bg-white">
@@ -272,6 +329,99 @@ export default function EditorPanel({
           />
         </article>
       </div>
+
+      <Dialog open={successOpen} onOpenChange={setSuccessOpen}>
+        <DialogContent className="max-w-sm gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">
+          <div className="border-b border-slate-100 px-5 pb-4 pt-5 pr-12">
+            <DialogHeader className="space-y-1 text-left">
+              <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">Submitted successfully</DialogTitle>
+              <DialogDescription className="text-sm leading-6 text-slate-500">
+                Your note was submitted. The writing stays on this page, so you can keep editing and submit again.
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+          <div className="flex justify-end px-5 py-4">
+            <button
+              type="button"
+              onClick={() => setSuccessOpen(false)}
+              className="h-9 rounded-xl bg-slate-900 px-3.5 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              OK
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={historyOpen}
+        onOpenChange={(open) => {
+          setHistoryOpen(open)
+          if (!open) setSelectedSubmission(null)
+        }}
+      >
+        <DialogContent className="max-h-[min(36rem,calc(100dvh-2.5rem))] max-w-lg gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">
+          <div className="border-b border-slate-100 px-5 pb-4 pt-5 pr-12">
+            <DialogHeader className="space-y-1 text-left">
+              <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">
+                {selectedSubmission ? "Previous submission" : "Previous submissions"}
+              </DialogTitle>
+              <DialogDescription className="text-sm leading-6 text-slate-500">
+                {selectedSubmission
+                  ? submittedAt(selectedSubmission.createdAt)
+                  : "Each submit is kept. Opening one does not change what you are writing now."}
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+          <div className="max-h-[min(24rem,calc(100dvh-12rem))] overflow-y-auto px-5 py-4">
+            {selectedSubmission ? (
+              <div className="space-y-4">
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Initial thoughts</p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                    {selectedSubmission.concept1 || "Nothing written."}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                    New insights and supplementary points
+                  </p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                    {selectedSubmission.concept2 || "Nothing written."}
+                  </p>
+                </div>
+              </div>
+            ) : submissions.length === 0 ? (
+              <p className="text-sm text-slate-500">You have not submitted this note yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {submissions.map((item, index) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedSubmission(item)}
+                      className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition hover:border-slate-300 hover:bg-white"
+                    >
+                      <span className="text-sm font-semibold text-slate-900">Submission {submissions.length - index}</span>
+                      <span className="text-xs font-medium text-slate-500">{submittedAt(item.createdAt)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {selectedSubmission && (
+            <div className="flex justify-end border-t border-slate-100 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setSelectedSubmission(null)}
+                className="h-9 rounded-xl px-3 text-sm font-semibold text-slate-600 hover:bg-slate-100"
+              >
+                All submissions
+              </button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </section>
   )
 }

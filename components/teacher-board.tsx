@@ -4,6 +4,13 @@ import { FormEvent, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Trash2 } from "lucide-react"
 import NateModeSwitch from "@/components/nate-mode-switch"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { createGroup, deleteGroup, moveStudent, removeStudent } from "@/lib/classroom-actions"
 import type { BoardGroup } from "@/lib/classroom"
 
@@ -23,7 +30,13 @@ export default function TeacherBoard({
   const router = useRouter()
   const [name, setName] = useState("")
   const [pending, setPending] = useState(false)
-  const [error, setError] = useState("")
+  const [notice, setNotice] = useState("")
+  const [confirm, setConfirm] = useState<{
+    title: string
+    description: string
+    confirmLabel: string
+    onConfirm: () => void
+  } | null>(null)
   const [moves, setMoves] = useState<Record<string, string>>({})
 
   async function onCreate(event: FormEvent) {
@@ -31,55 +44,67 @@ export default function TeacherBoard({
     const nextName = name.trim()
     if (!nextName || pending) return
     setPending(true)
-    setError("")
+    setName("")
     const result = await createGroup(nextName)
     setPending(false)
     if (!result.ok) {
-      setError(result.error)
+      setNotice(result.error)
       return
     }
-    setName("")
     router.refresh()
   }
 
-  async function onDeleteGroup(groupId: string, groupName: string) {
+  function onDeleteGroup(groupId: string, groupName: string) {
     if (pending) return
-    if (!window.confirm(`Delete “${groupName}”? Students in it will need to join a group again.`)) return
+    setConfirm({
+      title: `Delete ${groupName}`,
+      description: `Delete “${groupName}”? Students in it will need to join a group again.`,
+      confirmLabel: "Delete",
+      onConfirm: () => void runDelete(groupId),
+    })
+  }
+
+  async function runDelete(groupId: string) {
     setPending(true)
-    setError("")
     const result = await deleteGroup(groupId)
     setPending(false)
     if (!result.ok) {
-      setError(result.error)
+      setNotice(result.error)
       return
     }
     router.push("/")
     router.refresh()
   }
 
-  async function onMove(userId: string) {
-    const groupId = moves[userId]
+  async function onMove(userId: string, fromGroupId: string) {
+    const groupId = moves[`${fromGroupId}:${userId}`]
     if (!groupId || pending) return
     setPending(true)
-    setError("")
-    const result = await moveStudent(userId, groupId)
+    const result = await moveStudent(userId, groupId, fromGroupId)
     setPending(false)
     if (!result.ok) {
-      setError(result.error)
+      setNotice(result.error)
       return
     }
     router.refresh()
   }
 
-  async function onRemove(userId: string, studentName: string) {
+  function onRemove(userId: string, studentName: string, groupId: string) {
     if (pending) return
-    if (!window.confirm(`Remove ${studentName} from their group? They will need to join a group again.`)) return
+    setConfirm({
+      title: `Remove ${studentName}`,
+      description: `Remove ${studentName} from this group? They stay in any other sessions they joined.`,
+      confirmLabel: "Remove",
+      onConfirm: () => void runRemove(userId, groupId),
+    })
+  }
+
+  async function runRemove(userId: string, groupId: string) {
     setPending(true)
-    setError("")
-    const result = await removeStudent(userId)
+    const result = await removeStudent(userId, groupId)
     setPending(false)
     if (!result.ok) {
-      setError(result.error)
+      setNotice(result.error)
       return
     }
     router.refresh()
@@ -91,7 +116,7 @@ export default function TeacherBoard({
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Teacher</p>
         <h1 className="mt-1 text-xl font-bold tracking-tight text-slate-900">Groups</h1>
         <p className="mt-1 text-xs leading-relaxed text-slate-500">
-          Create groups for students to join. Each group has one chat.
+          Create groups, then open each session from the class list above.
         </p>
         <form onSubmit={onCreate} className="mt-3 flex gap-2">
           <input
@@ -109,7 +134,55 @@ export default function TeacherBoard({
             Create
           </button>
         </form>
-        {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
+        <Dialog open={Boolean(notice)} onOpenChange={(open) => !open && setNotice("")}>
+          <DialogContent className="max-w-sm gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">
+            <div className="border-b border-slate-100 px-5 pb-4 pt-5 pr-12">
+              <DialogHeader className="space-y-1 text-left">
+                <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">Please try again</DialogTitle>
+                <DialogDescription className="text-sm leading-6 text-slate-500">{notice}</DialogDescription>
+              </DialogHeader>
+            </div>
+            <div className="flex justify-end px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setNotice("")}
+                className="h-9 rounded-xl bg-slate-900 px-3.5 text-sm font-semibold text-white hover:bg-slate-800"
+              >
+                OK
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
+        <Dialog open={Boolean(confirm)} onOpenChange={(open) => !open && setConfirm(null)}>
+          <DialogContent className="max-w-sm gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">
+            <div className="border-b border-slate-100 px-5 pb-4 pt-5 pr-12">
+              <DialogHeader className="space-y-1 text-left">
+                <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">{confirm?.title}</DialogTitle>
+                <DialogDescription className="text-sm leading-6 text-slate-500">{confirm?.description}</DialogDescription>
+              </DialogHeader>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setConfirm(null)}
+                className="h-9 rounded-xl px-3 text-sm font-semibold text-slate-600 hover:bg-slate-100"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const action = confirm?.onConfirm
+                  setConfirm(null)
+                  action?.()
+                }}
+                className="h-9 rounded-xl bg-red-600 px-3.5 text-sm font-semibold text-white hover:bg-red-700"
+              >
+                {confirm?.confirmLabel || "Delete"}
+              </button>
+            </div>
+          </DialogContent>
+        </Dialog>
       </div>
 
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
@@ -177,9 +250,9 @@ export default function TeacherBoard({
                         {others.length > 0 && (
                           <>
                             <select
-                              value={moves[student.id] || ""}
+                              value={moves[`${group.id}:${student.id}`] || ""}
                               onChange={(event) =>
-                                setMoves((current) => ({ ...current, [student.id]: event.target.value }))
+                                setMoves((current) => ({ ...current, [`${group.id}:${student.id}`]: event.target.value }))
                               }
                               className="h-8 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-700"
                             >
@@ -192,8 +265,8 @@ export default function TeacherBoard({
                             </select>
                             <button
                               type="button"
-                              disabled={pending || !moves[student.id]}
-                              onClick={() => onMove(student.id)}
+                              disabled={pending || !moves[`${group.id}:${student.id}`]}
+                              onClick={() => onMove(student.id, group.id)}
                               className="h-8 rounded-lg bg-slate-900 px-2.5 text-xs font-semibold text-white disabled:opacity-40"
                             >
                               Move
@@ -203,7 +276,7 @@ export default function TeacherBoard({
                         <button
                           type="button"
                           disabled={pending}
-                          onClick={() => onRemove(student.id, student.name)}
+                          onClick={() => onRemove(student.id, student.name, group.id)}
                           className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-40"
                         >
                           Remove

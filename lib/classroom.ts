@@ -1,4 +1,5 @@
 import "server-only"
+import { cache } from "react"
 import { createClient } from "./supabase/server"
 import { normalizeNateMode } from "./nate"
 
@@ -112,7 +113,7 @@ export async function listGroupSessions(groupId: string): Promise<
   }
 }
 
-export async function getTeacherBoard(): Promise<
+export const getTeacherBoard = cache(async function getTeacherBoard(): Promise<
   | { ok: true; groups: BoardGroup[]; waiting: { id: string; name: string }[]; students: ClassroomStudent[] }
   | { ok: false; error: string; needsSetup?: boolean }
 > {
@@ -186,4 +187,4 @@ export async function getTeacherBoard(): Promise<
   }))
 
   return { ok: true, groups, waiting, students }
-}
+})

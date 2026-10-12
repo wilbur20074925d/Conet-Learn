@@ -28,6 +28,8 @@ export interface YjsNoteConnectionConfig {
   userId: string;
   userName?: string;
   color?: string;
+  /** When true, join the document without publishing a name or cursor. */
+  silent?: boolean;
 }
 
 export interface NoteRemoteCollaborator {
@@ -53,6 +55,7 @@ export class YjsNoteCollaborationService {
   private commentsListeners = new Set<() => void>();
   private titleObserver: (() => void) | null = null;
   private commentsObserver: (() => void) | null = null;
+  private releaseTimer: ReturnType<typeof setTimeout> | null = null;
 
   private constructor(config: YjsNoteConnectionConfig) {
     this.config = config;
@@ -61,7 +64,7 @@ export class YjsNoteCollaborationService {
 
   static getInstance(config: YjsNoteConnectionConfig): YjsNoteCollaborationService {
     const roomId = `note-${config.noteId}`;
-    const key = `${config.wsUrl}:${roomId}`;
+    const key = `${config.wsUrl}:${roomId}:${config.silent ? "observe" : "edit"}`;
     if (!YjsNoteCollaborationService.instances.has(key)) {
       YjsNoteCollaborationService.instances.set(key, new YjsNoteCollaborationService(config));
     }
@@ -81,6 +84,10 @@ export class YjsNoteCollaborationService {
   }
 
   connect(): void {
+    if (this.releaseTimer) {
+      clearTimeout(this.releaseTimer);
+      this.releaseTimer = null;
+    }
     this.refCount += 1;
     if (this.provider || !this.config) {
       // Already connected — still refresh awareness for this user if needed
@@ -92,8 +99,8 @@ export class YjsNoteCollaborationService {
     const roomId = this.roomId;
     const params = {
       room: roomId,
-      userId: this.config.userId,
-      userName: this.config.userName || '',
+      userId: this.config.silent ? "" : this.config.userId,
+      userName: this.config.silent ? "" : this.config.userName || "",
     };
     const exactUrl = `${origin}?${new URLSearchParams(params).toString()}`;
 
@@ -125,12 +132,16 @@ export class YjsNoteCollaborationService {
 
   private setupAwareness(): void {
     if (!this.awareness || !this.config) return;
-    this.awareness.setLocalStateField('user', {
-      userId: this.config.userId,
-      userName: this.config.userName || '',
-      color: this.config.color || colorForUserId(this.config.userId),
-      timestamp: Date.now(),
-    });
+    if (this.config.silent) {
+      this.awareness.setLocalState(null);
+    } else {
+      this.awareness.setLocalStateField('user', {
+        userId: this.config.userId,
+        userName: this.config.userName || '',
+        color: this.config.color || colorForUserId(this.config.userId),
+        timestamp: Date.now(),
+      });
+    }
     this.awareness.on('change', () => {
       this.awarenessListeners.forEach((l) => l());
     });
@@ -155,6 +166,15 @@ export class YjsNoteCollaborationService {
   disconnect(): void {
     this.refCount = Math.max(0, this.refCount - 1);
     if (this.refCount > 0) return;
+    // React remounts once on load. Wait so that second mount reuses this socket
+    // instead of closing it before the handshake finishes.
+    if (this.releaseTimer) clearTimeout(this.releaseTimer);
+    this.releaseTimer = setTimeout(() => this.release(), 500);
+  }
+
+  private release(): void {
+    this.releaseTimer = null;
+    if (this.refCount > 0) return;
 
     if (this.titleObserver) {
       getMetaMap(this.doc).unobserve(this.titleObserver);
@@ -174,6 +194,16 @@ export class YjsNoteCollaborationService {
     this.isConnected = false;
     this.isSynced = false;
     this.connectionListeners.forEach((l) => l(false));
+    this.connectionListeners.clear();
+    this.syncListeners.clear();
+    this.awarenessListeners.clear();
+    this.titleListeners.clear();
+    this.commentsListeners.clear();
+    if (this.config) {
+      YjsNoteCollaborationService.instances.delete(
+        `${this.config.wsUrl}:${this.roomId}:${this.config.silent ? "observe" : "edit"}`
+      );
+    }
   }
 
   getDoc(): Y.Doc {
@@ -228,7 +258,7 @@ export class YjsNoteCollaborationService {
     this.awareness.getStates().forEach((state, clientId) => {
       if (clientId === myId) return;
       const user = state.user;
-      if (!user) return;
+      if (!user || user.hidden || user.role === "teacher") return;
       result.push({
         userId: user.userId || String(clientId),
         userName: user.userName || `User ${String(clientId).slice(-4)}`,
@@ -266,16 +296,5 @@ export class YjsNoteCollaborationService {
 
   destroy(): void {
     this.disconnect();
-    if (this.refCount > 0) return;
-    this.connectionListeners.clear();
-    this.syncListeners.clear();
-    this.awarenessListeners.clear();
-    this.titleListeners.clear();
-    this.commentsListeners.clear();
-    if (this.config) {
-      YjsNoteCollaborationService.instances.delete(
-        `${this.config.wsUrl}:${this.roomId}`
-      );
-    }
   }
 }

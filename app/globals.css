@@ -2,9 +2,26 @@
 @tailwind components;
 @tailwind utilities;
 
+@keyframes nate-ellipsis {
+  0%,
+  20% {
+    opacity: 0.15;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.15;
+  }
+}
+
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+
+  .animate-nate-ellipsis {
+    animation: nate-ellipsis 1.05s ease-in-out infinite;
   }
 }
 

@@ -30,24 +30,32 @@ export type StudentClassroomPayload = {
   initialNotes: CollaborativeNote[]
   document: string
   peers: GroupMember[]
+  classSessionId: string | null
 }
 
 export async function loadStudentClassroom(
   groupId: string,
-  profileId: string
+  profileId: string,
+  requestedSessionId?: string | null
 ): Promise<{ ok: true; data: StudentClassroomPayload } | { ok: false; error: string }> {
-  const [chats, notesResult, document, peers] = await Promise.all([
+  const supabase = await createClient()
+  const [chats, notesResult, document, peers, groupRow, requestedMessages] = await Promise.all([
     listGroupSessions(groupId),
     listCollaborativeNotes(groupId),
     getDocument(groupId, profileId),
     listGroupPeers(groupId, profileId),
+    supabase.from("ConetGroups").select("class_session_id").eq("id", groupId).maybeSingle(),
+    requestedSessionId ? getSessionMessages(requestedSessionId) : Promise.resolve(null),
   ])
 
   if (!chats.ok) return { ok: false, error: chats.error }
 
-  const active = canonicalSession(chats.sessions)
+  const requested = requestedSessionId
+    ? chats.sessions.find((item) => item.id === requestedSessionId) || null
+    : null
+  const active = requested || canonicalSession(chats.sessions)
 
-  const initialMessages = active ? await getSessionMessages(active.id) : []
+  const initialMessages = requestedMessages ?? (active ? await getSessionMessages(active.id) : [])
 
   return {
     ok: true,
@@ -57,6 +65,7 @@ export async function loadStudentClassroom(
       initialNotes: notesResult.ok ? notesResult.notes : [],
       document,
       peers,
+      classSessionId: groupRow.error ? null : ((groupRow.data?.class_session_id as string | null) ?? null),
     },
   }
 }

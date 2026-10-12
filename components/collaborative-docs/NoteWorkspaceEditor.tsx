@@ -7,14 +7,23 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import type { Editor } from "@tiptap/react"
-import { Clock, Wifi, WifiOff } from "lucide-react"
+import { Clock, History, Wifi, WifiOff } from "lucide-react"
 import { CollaborativeNoteEditor } from "@/components/collaborative-docs/CollaborativeNoteEditor"
 import {
   DocumentSessionLoader,
   type LoadStage,
 } from "@/components/collaborative-docs/DocumentSessionLoader"
+import { SubmissionBody, submittedAt } from "@/components/collaborative-docs/group-post-history"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
 import { useYjsNoteCollaboration } from "@/hooks/useYjsNoteCollaboration"
 import type { CollaborativeNote } from "@/lib/collaborative-notes"
+import { listGroupPostSubmissions, submitGroupPost, type GroupPostSubmission } from "@/lib/group-post-submissions"
 import { getYjsWsUrl } from "@/lib/yjs/normalizeYjsWsOrigin"
 import {
   collapseRepeatedTitle,
@@ -40,6 +49,7 @@ interface NoteWorkspaceEditorProps {
   onActivity?: (event: NoteActivityEvent) => void
   minHeight?: string
   showTitle?: boolean
+  readOnly?: boolean
 }
 
 const EDIT_LOG_COOLDOWN_MS = 45_000
@@ -51,6 +61,7 @@ export function NoteWorkspaceEditor({
   onActivity,
   minHeight = "300px",
   showTitle = true,
+  readOnly = false,
 }: NoteWorkspaceEditorProps) {
   const seed = parseStoredNote(note.content)
   const {
@@ -73,10 +84,18 @@ export function NoteWorkspaceEditor({
     enabled: true,
     seedTitle: collapseRepeatedTitle(note.title || ""),
     seedHtml: seed.html || note.content || "",
+    silent: readOnly,
   })
 
   const [loadStage, setLoadStage] = useState<LoadStage>("finding")
   const [sessionReady, setSessionReady] = useState(false)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState("")
+  const [successOpen, setSuccessOpen] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [submissions, setSubmissions] = useState<GroupPostSubmission[]>([])
+  const [historyError, setHistoryError] = useState("")
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const loadStartedAt = useRef(Date.now())
   const htmlTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorRef = useRef<Editor | null>(null)
@@ -133,7 +152,7 @@ export function NoteWorkspaceEditor({
 
   useEffect(() => {
     const ed = editorRef.current
-    if (!ed || !ydoc) return
+    if (!ed || !ydoc || readOnly) return
     const onUpdate = () => {
       if (htmlTimer.current) clearTimeout(htmlTimer.current)
       htmlTimer.current = setTimeout(() => {
@@ -155,9 +174,10 @@ export function NoteWorkspaceEditor({
       ed.off("update", onUpdate)
       if (htmlTimer.current) clearTimeout(htmlTimer.current)
     }
-  }, [ydoc, displayTitle, note.title, currentUser.id, onNoteMetaChange, logEditSession])
+  }, [ydoc, displayTitle, note.title, currentUser.id, onNoteMetaChange, logEditSession, readOnly])
 
   useEffect(() => {
+    if (readOnly) return
     const cleaned = collapseRepeatedTitle(title || "")
     if (cleaned && cleaned !== note.title) {
       onNoteMetaChange?.({ title: cleaned })
@@ -193,6 +213,47 @@ export function NoteWorkspaceEditor({
     }
   }
 
+  async function refreshSubmissions() {
+    const result = await listGroupPostSubmissions(note.group_id)
+    if (result.error) {
+      setHistoryError(result.error)
+      return
+    }
+    setHistoryError("")
+    setSubmissions(result.submissions)
+  }
+
+  useEffect(() => {
+    void refreshSubmissions()
+  }, [note.group_id])
+
+  async function handleSubmit() {
+    if (readOnly || submitting) return
+    const html = editorRef.current?.getHTML() || ""
+    const plain = editorRef.current?.getText().trim() || ""
+    if (!plain) {
+      setSubmitError("Write something in the group post before submitting.")
+      return
+    }
+    setSubmitting(true)
+    setSubmitError("")
+    const result = await submitGroupPost({
+      groupId: note.group_id,
+      noteId: note.id,
+      title: displayTitle || note.title || "Group document",
+      html,
+    })
+    setSubmitting(false)
+    if (!result.ok) {
+      setSubmitError(result.error)
+      return
+    }
+    setSuccessOpen(true)
+    await refreshSubmissions()
+  }
+
+  const selected = submissions.find((item) => item.id === selectedId) || null
+
   if (!sessionReady || !ydoc || !fragment || !awareness) {
     return (
       <DocumentSessionLoader
@@ -210,6 +271,7 @@ export function NoteWorkspaceEditor({
           <input
             type="text"
             value={displayTitle}
+            readOnly={readOnly}
             onChange={(e) => handleTitleChange(e.target.value)}
             className="min-w-[12rem] flex-1 bg-transparent text-2xl font-semibold text-slate-900 placeholder:text-slate-400 focus:outline-none"
             placeholder="Session name"
@@ -250,8 +312,37 @@ export function NoteWorkspaceEditor({
               </>
             )}
           </span>
+          {!readOnly && (
+            <button
+              type="button"
+              onClick={() => void handleSubmit()}
+              disabled={submitting}
+              className="inline-flex h-7 items-center rounded-lg bg-slate-900 px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
+            >
+              {submitting ? "Submitting..." : "Submit"}
+            </button>
+          )}
+          <button
+            type="button"
+            aria-label="Previous submissions"
+            title="Previous submissions"
+            onClick={() => {
+              setSelectedId(null)
+              setHistoryOpen(true)
+              void refreshSubmissions()
+            }}
+            className="relative inline-flex h-7 w-7 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:bg-slate-50 hover:text-slate-900"
+          >
+            <History className="h-3.5 w-3.5" />
+            {submissions.length > 0 && (
+              <span className="absolute -right-1 -top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-slate-900 px-0.5 text-[8px] font-semibold leading-none text-white">
+                {submissions.length}
+              </span>
+            )}
+          </button>
         </div>
       </div>
+      {submitError && <p className="text-xs font-medium text-red-600">{submitError}</p>}
 
       <CollaborativeNoteEditor
         ydoc={ydoc}
@@ -261,12 +352,108 @@ export function NoteWorkspaceEditor({
           name: currentUser.name || "User",
           color: userColor,
         }}
+        editable={!readOnly}
+        publishPresence={!readOnly}
         documentTitle={displayTitle}
         seedHtml={seedHtmlOnce || undefined}
         onSeedConsumed={consumeSeedHtml}
         onEditorReady={handleEditorReady}
         minHeight={minHeight}
       />
+
+      <Dialog open={successOpen} onOpenChange={setSuccessOpen}>
+        <DialogContent className="max-w-sm gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">
+          <div className="border-b border-slate-100 px-5 pb-4 pt-5 pr-12">
+            <DialogHeader className="space-y-1 text-left">
+              <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">Submitted successfully</DialogTitle>
+              <DialogDescription className="text-sm leading-6 text-slate-500">
+                This copy is saved. The group post stays on the page, so anyone in the group can keep writing and submit again.
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+          <div className="flex justify-end px-5 py-4">
+            <button
+              type="button"
+              onClick={() => setSuccessOpen(false)}
+              className="h-9 rounded-xl bg-slate-900 px-3.5 text-sm font-semibold text-white hover:bg-slate-800"
+            >
+              OK
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={historyOpen}
+        onOpenChange={(open) => {
+          setHistoryOpen(open)
+          if (!open) setSelectedId(null)
+        }}
+      >
+        <DialogContent className="max-h-[min(40rem,calc(100dvh-2.5rem))] max-w-lg gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">
+          <div className="border-b border-slate-100 px-5 pb-4 pt-5 pr-12">
+            <DialogHeader className="space-y-1 text-left">
+              <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">
+                {selected ? "Previous submission" : "Previous submissions"}
+              </DialogTitle>
+              <DialogDescription className="text-sm leading-6 text-slate-500">
+                {selected
+                  ? `${selected.authorName} · ${submittedAt(selected.createdAt)}`
+                  : "Each submit is kept. Opening one does not change the live group post."}
+              </DialogDescription>
+            </DialogHeader>
+          </div>
+          <div className="max-h-[min(28rem,calc(100dvh-12rem))] overflow-y-auto bg-slate-50 px-5 py-4">
+            {selected ? (
+              <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                <p className="text-sm font-semibold text-slate-900">{selected.title}</p>
+                <div className="mt-2">
+                  <SubmissionBody html={selected.html} />
+                </div>
+              </div>
+            ) : historyError ? (
+              <p className="text-sm leading-6 text-amber-900">{historyError}</p>
+            ) : submissions.length === 0 ? (
+              <p className="text-sm text-slate-500">No one has submitted this group post yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {submissions.map((item, index) => (
+                  <li key={item.id}>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedId(item.id)}
+                      className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-left transition hover:border-slate-300 hover:shadow-sm"
+                    >
+                      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">
+                        {item.authorName.trim().charAt(0).toUpperCase() || "?"}
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold text-slate-900">
+                          {item.authorName}
+                        </span>
+                        <span className="block truncate text-xs text-slate-500">
+                          Submission {submissions.length - index} · {submittedAt(item.createdAt)}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          {selected && (
+            <div className="flex justify-end border-t border-slate-100 px-5 py-4">
+              <button
+                type="button"
+                onClick={() => setSelectedId(null)}
+                className="h-9 rounded-xl px-3 text-sm font-semibold text-slate-600 hover:bg-slate-100"
+              >
+                All submissions
+              </button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -14,6 +14,7 @@ import {
 } from "./nate"
 
 import { mapMessageRows, type Message, type RawMessage } from "./map-messages"
+import { inGroup } from "./session-membership"
 
 export type { Message }
 
@@ -24,6 +25,12 @@ export interface GroupMember {
   role: string
 }
 
+export interface SessionMembership {
+  groupId: string
+  groupName: string
+  newintervene: NateMode
+}
+
 export interface SessionContext {
   profileId: string
   name: string
@@ -32,6 +39,8 @@ export interface SessionContext {
   groupId: string | null
   groupName: string | null
   newintervene: NateMode
+  memberships: SessionMembership[]
+  groupIds: string[]
 }
 
 type ProfileRow = {
@@ -99,8 +108,6 @@ export const getSessionContext = cache(async (): Promise<
     .select("group_id, created_at, ConetGroups(id, name, newintervene)")
     .eq("user_id", profile.id)
     .order("created_at", { ascending: true })
-    .limit(1)
-    .maybeSingle()
 
   if (membership.error) {
     if (missingTable(membership.error)) {
@@ -113,19 +120,27 @@ export const getSessionContext = cache(async (): Promise<
     return { ok: false, error: membership.error.message }
   }
 
-  const membershipRow = membership.data as {
+  type MembershipQueryRow = {
     group_id: string
     ConetGroups:
       | { id: string; name: string; newintervene: number }
       | { id: string; name: string; newintervene: number }[]
       | null
-  } | null
-  const embedded = membershipRow
-    ? Array.isArray(membershipRow.ConetGroups)
-      ? membershipRow.ConetGroups[0]
-      : membershipRow.ConetGroups
-    : null
-  const groupId = embedded?.id || membershipRow?.group_id || null
+  }
+
+  const memberships: SessionMembership[] = ((membership.data || []) as MembershipQueryRow[]).flatMap((row) => {
+    const embedded = Array.isArray(row.ConetGroups) ? row.ConetGroups[0] : row.ConetGroups
+    const groupId = embedded?.id || row.group_id
+    if (!groupId) return []
+    return [
+      {
+        groupId,
+        groupName: embedded?.name || "Group",
+        newintervene: normalizeNateMode(embedded?.newintervene),
+      },
+    ]
+  })
+  const first = memberships[0] ?? null
 
   return {
     ok: true,
@@ -134,9 +149,11 @@ export const getSessionContext = cache(async (): Promise<
       name: profile.name,
       email: profile.email,
       role: profile.role,
-      groupId,
-      groupName: embedded?.name || null,
-      newintervene: normalizeNateMode(embedded?.newintervene),
+      groupId: first?.groupId ?? null,
+      groupName: first?.groupName ?? null,
+      newintervene: first?.newintervene ?? normalizeNateMode(null),
+      memberships,
+      groupIds: memberships.map((item) => item.groupId),
     },
     members: [],
   }
@@ -186,7 +203,8 @@ export async function sendMessage(_prevState: unknown, formData: FormData) {
 
   const { message, groupId, sessionId } = parsed.data
   const replyTo = parsed.data.replyTo || null
-  if (session.ctx.role !== "student" || !session.ctx.groupId || groupId !== session.ctx.groupId) {
+  const mine = session.ctx.memberships.find((item) => item.groupId === groupId)
+  if (session.ctx.role !== "student" || !mine) {
     return { error: "Unauthorized" }
   }
 
@@ -220,7 +238,7 @@ export async function sendMessage(_prevState: unknown, formData: FormData) {
   }
 
   const trigger = await shouldTriggerNate(supabase, message, replyTo)
-  if (!trigger || session.ctx.newintervene === 3) {
+  if (!trigger || mine.newintervene === 3) {
     return { success: true as const, thinkingId: null as string | null }
   }
 
@@ -252,8 +270,9 @@ export async function sendMessage(_prevState: unknown, formData: FormData) {
 export async function finishNateReply(groupId: string, sessionId: string, thinkingId: string) {
   const session = await getSessionContext()
   if (!session.ok) return { error: session.error }
-  if (session.ctx.role !== "student" || session.ctx.groupId !== groupId) return { error: "Unauthorized" }
-  if (session.ctx.newintervene === 3) return { success: true }
+  const mine = session.ctx.memberships.find((item) => item.groupId === groupId)
+  if (session.ctx.role !== "student" || !mine) return { error: "Unauthorized" }
+  if (mine.newintervene === 3) return { success: true }
 
   const supabase = await createClient()
   const chat = await supabase.from("ConetSessions").select("id, group_id").eq("id", sessionId).maybeSingle()
@@ -305,7 +324,7 @@ export async function finishNateReply(groupId: string, sessionId: string, thinki
   const reply = await requestNateReply(
     history,
     latestUser?.content || "Please join our discussion.",
-    session.ctx.newintervene
+    mine.newintervene
   )
 
   if (!reply) return { success: true }
@@ -345,7 +364,7 @@ export async function saveDocumentSnapshot(content: string | null | undefined, g
   const session = await getSessionContext()
   if (!session.ok) return { error: session.error }
   if (content === null || content === undefined) return { error: "Invalid content." }
-  if (!session.ctx.groupId || groupId !== session.ctx.groupId) return { error: "Unauthorized" }
+  if (!inGroup(session.ctx, groupId)) return { error: "Unauthorized" }
 
   const supabase = await createClient()
   const existing = await supabase
@@ -383,46 +402,117 @@ export async function saveDocumentSnapshot(content: string | null | undefined, g
   return { success: true }
 }
 
-export async function submitFinalDocument(groupId: string) {
+export async function submitFinalDocument(groupId: string, content?: string) {
   const session = await getSessionContext()
   if (!session.ok) return { error: session.error }
-  if (!session.ctx.groupId || groupId !== session.ctx.groupId) return { error: "Unauthorized" }
+  if (!inGroup(session.ctx, groupId)) return { error: "Unauthorized" }
+
+  const supabase = await createClient()
+  const payload = typeof content === "string" ? content : null
+  const existing = payload
+    ? null
+    : await supabase
+        .from("ConetDocuments")
+        .select("id, content")
+        .eq("group_id", groupId)
+        .eq("user_id", session.ctx.profileId)
+        .maybeSingle()
+
+  if (!payload && !existing?.data) return { error: "Write something before submitting." }
+  const contentToSubmit = payload ?? (existing?.data?.content as string)
+
+  const saved = await supabase
+    .from("ConetDocuments")
+    .upsert(
+      {
+        group_id: groupId,
+        user_id: session.ctx.profileId,
+        content: contentToSubmit,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "group_id,user_id" }
+    )
+    .select("id")
+    .single()
+  if (saved.error || !saved.data) return { error: "Failed to submit, please try again." }
+
+  const createdAt = new Date().toISOString()
+  const history = await supabase
+    .from("ConetDocumentHistory")
+    .insert({
+      document_id: saved.data.id,
+      user_id: session.ctx.profileId,
+      content: contentToSubmit,
+      is_submit: true,
+      created_at: createdAt,
+    })
+    .select("id")
+    .single()
+  if (history.error || !history.data) return { error: "Failed to submit, please try again." }
+
+  const fields = readNoteFields(contentToSubmit)
+  return {
+    success: true as const,
+    message: "Document submitted successfully!",
+    submission: {
+      id: history.data.id as string,
+      concept1: fields.concept1,
+      concept2: fields.concept2,
+      createdAt,
+    },
+  }
+}
+
+export async function listMyNoteSubmissions(groupId: string): Promise<{
+  submissions: { id: string; concept1: string; concept2: string; createdAt: string }[]
+  error?: string
+}> {
+  const session = await getSessionContext()
+  if (!session.ok) return { submissions: [], error: session.error }
+  if (!inGroup(session.ctx, groupId)) return { submissions: [], error: "Unauthorized" }
 
   const supabase = await createClient()
   const doc = await supabase
     .from("ConetDocuments")
-    .select("id, content")
+    .select("id")
     .eq("group_id", groupId)
     .eq("user_id", session.ctx.profileId)
     .maybeSingle()
+  if (!doc.data) return { submissions: [] }
 
-  if (!doc.data) return { error: "Document not found. Write something before submitting." }
-
-  const latest = await supabase
+  const history = await supabase
     .from("ConetDocumentHistory")
-    .select("content")
+    .select("id, content, created_at")
     .eq("document_id", doc.data.id)
+    .eq("is_submit", true)
     .order("created_at", { ascending: false })
-    .limit(1)
-    .maybeSingle()
+  if (history.error || !history.data) return { submissions: [], error: "Could not load previous submissions." }
 
-  const contentToSubmit = latest.data?.content ?? doc.data.content
-  const updated = await supabase
-    .from("ConetDocuments")
-    .update({ content: contentToSubmit, updated_at: new Date().toISOString() })
-    .eq("id", doc.data.id)
-  if (updated.error) return { error: "Failed to submit document, please try again." }
+  return {
+    submissions: history.data.map((row) => {
+      const fields = readNoteFields(row.content as string)
+      return {
+        id: row.id as string,
+        concept1: fields.concept1,
+        concept2: fields.concept2,
+        createdAt: row.created_at as string,
+      }
+    }),
+  }
+}
 
-  const history = await supabase.from("ConetDocumentHistory").insert({
-    document_id: doc.data.id,
-    user_id: session.ctx.profileId,
-    content: contentToSubmit,
-    is_submit: true,
-  })
-  if (history.error) return { error: "Failed to submit document, please try again." }
-
-  revalidatePath("/")
-  return { success: true, message: "Document submitted successfully!" }
+function readNoteFields(raw: string | null | undefined) {
+  if (!raw) return { concept1: "", concept2: "" }
+  try {
+    const parsed = JSON.parse(raw) as Record<string, string>
+    if (!parsed || typeof parsed !== "object") return { concept1: raw, concept2: "" }
+    return {
+      concept1: parsed.part1_concept1 || parsed.field1 || "",
+      concept2: parsed.part1_concept2 || parsed.field2 || "",
+    }
+  } catch {
+    return { concept1: raw, concept2: "" }
+  }
 }
 
 export async function updateGroupNewIntervention(groupId: string, newintervene: number) {

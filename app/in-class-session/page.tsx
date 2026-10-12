@@ -5,6 +5,7 @@ import ConsentWrapper from "@/components/consent-wrapper"
 import JoinGroup from "@/components/join-group"
 import StudentClassroom from "@/components/student-classroom"
 import { getSessionContext } from "@/lib/actions"
+import { membershipFor } from "@/lib/session-membership"
 import { listJoinableGroups } from "@/lib/classroom"
 import { loadStudentClassroom } from "@/lib/student-classroom-data"
 
@@ -22,7 +23,11 @@ function SetupScreen({ message }: { message: string }) {
   )
 }
 
-export default async function InClassSessionPage() {
+export default async function InClassSessionPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ session?: string | string[]; group?: string | string[] }>
+}) {
   const session = await getSessionContext()
   if (!session.ok) {
     if (session.error === "Unauthorized") redirect("/login")
@@ -30,9 +35,22 @@ export default async function InClassSessionPage() {
   }
 
   const { ctx } = session
-  if (ctx.role === "teacher") redirect("/")
+  if (ctx.role === "teacher") redirect("/dashboard")
 
-  if (!ctx.groupId || !ctx.groupName) {
+  const params = await searchParams
+  const requested = Array.isArray(params.session) ? params.session[0] : params.session
+  const requestedGroup = Array.isArray(params.group) ? params.group[0] : params.group
+  const sessionId =
+    requested && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requested)
+      ? requested
+      : null
+  const groupId =
+    requestedGroup && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestedGroup)
+      ? requestedGroup
+      : null
+  const active = membershipFor(ctx, groupId)
+
+  if (!active) {
     const directory = await listJoinableGroups()
     if (!directory.ok) return <SetupScreen message={directory.error} />
     return (
@@ -44,23 +62,24 @@ export default async function InClassSessionPage() {
     )
   }
 
-  const classroom = await loadStudentClassroom(ctx.groupId, ctx.profileId)
+  const classroom = await loadStudentClassroom(active.groupId, ctx.profileId, sessionId)
   if (!classroom.ok) return <SetupScreen message={classroom.error} />
 
   return (
     <StudentClassroom
       initialMode="in-class"
       name={ctx.name}
-      groupId={ctx.groupId}
-      groupName={ctx.groupName}
+      groupId={active.groupId}
+      groupName={active.groupName}
       session={classroom.data.session}
       initialMessages={classroom.data.initialMessages}
       currentUserId={ctx.profileId}
       currentUserName={ctx.name}
-      newintervene={ctx.newintervene}
+      newintervene={active.newintervene}
       initialNotes={classroom.data.initialNotes}
       document={classroom.data.document}
       peers={classroom.data.peers}
+      classSessionId={classroom.data.classSessionId}
     />
   )
 }

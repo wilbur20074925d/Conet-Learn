@@ -4,10 +4,9 @@ import ClassroomHeader from "@/components/classroom-header"
 import ConsentWrapper from "@/components/consent-wrapper"
 import JoinGroup from "@/components/join-group"
 import StudentClassroom from "@/components/student-classroom"
-import TeacherWorkspace from "@/components/teacher-workspace"
-import { getSessionContext, getSessionMessages } from "@/lib/actions"
-import { canonicalSession } from "@/lib/canonical-session"
-import { getTeacherBoard, listJoinableGroups } from "@/lib/classroom"
+import { getSessionContext } from "@/lib/actions"
+import { membershipFor } from "@/lib/session-membership"
+import { listJoinableGroups } from "@/lib/classroom"
 import { loadStudentClassroom } from "@/lib/student-classroom-data"
 
 export const dynamic = "force-dynamic"
@@ -33,7 +32,7 @@ function SetupScreen({ message }: { message: string }) {
 export default async function Home({
   searchParams,
 }: {
-  searchParams: Promise<{ session?: string | string[] }>
+  searchParams: Promise<{ session?: string | string[]; group?: string | string[] }>
 }) {
   const session = await getSessionContext()
   if (!session.ok) {
@@ -43,55 +42,16 @@ export default async function Home({
 
   const params = await searchParams
   const requested = Array.isArray(params.session) ? params.session[0] : params.session
+  const requestedGroup = Array.isArray(params.group) ? params.group[0] : params.group
   const { ctx } = session
 
   if (ctx.role === "teacher") {
-    const board = await getTeacherBoard()
-    if (!board.ok) return <SetupScreen message={board.error} />
-
-    let active: {
-      id: string
-      title: string
-      groupId: string
-      groupName: string
-      newintervene: number
-    } | null = null
-    if (isUuid(requested)) {
-      for (const group of board.groups) {
-        if (!group.sessions.some((item) => item.id === requested)) continue
-        const session = canonicalSession(group.sessions)
-        if (!session) continue
-        active = {
-          id: session.id,
-          title: group.name,
-          groupId: group.id,
-          groupName: group.name,
-          newintervene: group.newintervene,
-        }
-        break
-      }
-    }
-
-    const initialMessages = active ? await getSessionMessages(active.id) : []
-
-    return (
-      <div className="conet-page-bg flex h-dvh flex-col overflow-hidden text-slate-900">
-        <ConsentWrapper userId={ctx.profileId} />
-        <ClassroomHeader name={ctx.name} role={ctx.role} />
-        <TeacherWorkspace
-          groups={board.groups}
-          waiting={board.waiting}
-          students={board.students}
-          activeSessionId={active?.id || null}
-          initialMessages={initialMessages}
-          currentUserId={ctx.profileId}
-          currentUserName={ctx.name}
-        />
-      </div>
-    )
+    if (isUuid(requested)) redirect(`/dashboard?session=${requested}&view=note`)
+    redirect("/dashboard")
   }
 
-  if (!ctx.groupId || !ctx.groupName) {
+  const active = membershipFor(ctx, isUuid(requestedGroup) ? requestedGroup : null)
+  if (!active) {
     const directory = await listJoinableGroups()
     if (!directory.ok) return <SetupScreen message={directory.error} />
     return (
@@ -103,23 +63,24 @@ export default async function Home({
     )
   }
 
-  const classroom = await loadStudentClassroom(ctx.groupId, ctx.profileId)
+  const classroom = await loadStudentClassroom(active.groupId, ctx.profileId, isUuid(requested) ? requested : null)
   if (!classroom.ok) return <SetupScreen message={classroom.error} />
 
   return (
     <StudentClassroom
       initialMode="group-project"
       name={ctx.name}
-      groupId={ctx.groupId}
-      groupName={ctx.groupName}
+      groupId={active.groupId}
+      groupName={active.groupName}
       session={classroom.data.session}
       initialMessages={classroom.data.initialMessages}
       currentUserId={ctx.profileId}
       currentUserName={ctx.name}
-      newintervene={ctx.newintervene}
+      newintervene={active.newintervene}
       initialNotes={classroom.data.initialNotes}
       document={classroom.data.document}
       peers={classroom.data.peers}
+      classSessionId={classroom.data.classSessionId}
     />
   )
 }

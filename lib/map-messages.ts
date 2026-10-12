@@ -6,6 +6,7 @@ export interface Message {
   name: string
   avatar_url: string | null
   is_ai: boolean
+  authorRole?: string
   reply_to?: string | null
   is_reply?: boolean
   original_message?: {
@@ -48,6 +49,7 @@ export function mapMessageRows(rows: RawMessage[]): Message[] {
       name: author?.name || "Member",
       avatar_url: author?.avatar_url || null,
       is_ai: author?.role === "ai" || row.user_id === NATE_USER_ID,
+      authorRole: author?.role,
       reply_to: row.reply_to,
       is_reply: row.is_reply,
       original_message: original

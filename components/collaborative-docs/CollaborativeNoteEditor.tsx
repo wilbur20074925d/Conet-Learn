@@ -224,6 +224,8 @@ export interface CollaborativeNoteEditorProps {
   /** When false, formatting toolbar is omitted (parent can render it in sticky chrome). */
   showToolbar?: boolean;
   minHeight?: string;
+  /** When false, this editor does not publish a cursor or name to collaborators. */
+  publishPresence?: boolean;
 }
 
 function ToolbarButton({
@@ -1413,6 +1415,7 @@ export const CollaborativeNoteEditor: React.FC<CollaborativeNoteEditorProps> = (
   documentTitle,
   showToolbar = true,
   minHeight = '360px',
+  publishPresence = true,
 }) => {
   const seededRef = useRef(false);
   const onEditorReadyRef = useRef(onEditorReady);
@@ -1466,15 +1469,19 @@ export const CollaborativeNoteEditor: React.FC<CollaborativeNoteEditorProps> = (
         document: ydoc,
         field: 'prosemirror',
       }),
-      CollaborationCursor.configure({
-        provider: { awareness } as any,
-        user: {
-          name: user.name,
-          color: user.color,
-        },
-      }),
+      ...(publishPresence
+        ? [
+            CollaborationCursor.configure({
+              provider: { awareness } as any,
+              user: {
+                name: user.name,
+                color: user.color,
+              },
+            }),
+          ]
+        : []),
     ],
-    [ydoc, awareness, user.name, user.color, placeholder]
+    [ydoc, awareness, user.name, user.color, placeholder, publishPresence]
   );
 
   const editor = useEditor(

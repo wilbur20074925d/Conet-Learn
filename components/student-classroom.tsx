@@ -36,6 +36,8 @@ export default function StudentClassroom({
   initialNotes,
   document,
   peers,
+  classSessionId = null,
+  onDashboardBack,
 }: {
   initialMode: StudentWorkspaceMode
   name: string
@@ -49,6 +51,8 @@ export default function StudentClassroom({
   initialNotes: CollaborativeNote[]
   document: string
   peers: { id: string; name: string; avatar_url?: string | null }[]
+  classSessionId?: string | null
+  onDashboardBack?: () => void
 }) {
   const [mode, setMode] = useState(initialMode)
 
@@ -61,7 +65,7 @@ export default function StudentClassroom({
   function switchMode(next: StudentWorkspaceMode) {
     if (next === mode) return
     setMode(next)
-    writeWorkspaceMode(next)
+    if (!onDashboardBack) writeWorkspaceMode(next)
   }
 
   return (
@@ -72,6 +76,9 @@ export default function StudentClassroom({
         role="student"
         groupName={groupName}
         showWorkspaceNav
+        showDashboardLink
+        onDashboardBack={onDashboardBack}
+        materialsSessionId={classSessionId}
         workspaceMode={mode}
         onWorkspaceModeChange={switchMode}
       />

@@ -367,6 +367,10 @@ function debouncedSave(doc, userId) {
   const roomId = doc.name;
   if (saveDebouncers.has(roomId)) clearTimeout(saveDebouncers.get(roomId));
   const timeout = setTimeout(() => {
+    if (roomId.startsWith('chat-')) {
+      saveDebouncers.delete(roomId);
+      return;
+    }
     if (roomId.startsWith('note-')) {
       if (noteIsEmpty(doc)) {
         console.log(`[Yjs Server] Skip persist empty note for ${roomId}`);

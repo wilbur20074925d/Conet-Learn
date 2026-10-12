@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server"
 import { withApiLogging } from "@/lib/api-logger"
 import { createClient } from "@/lib/supabase/server"
-import { getSessionContext, finishNateReply } from "@/lib/actions"
+import { finishNateReply, getSessionContext } from "@/lib/actions"
+import { inGroup } from "@/lib/session-membership"
 import { NATE_THINKING, NATE_USER_ID, mentionsNATE } from "@/lib/nate"
 
 export const POST = withApiLogging("send-message:POST", async (request: NextRequest) => {
@@ -20,7 +21,7 @@ export const POST = withApiLogging("send-message:POST", async (request: NextRequ
     if (!message) {
       return NextResponse.json({ error: "Message is required and cannot be empty" }, { status: 400 })
     }
-    if (session.ctx.role !== "student" || !session.ctx.groupId || !groupId || groupId !== session.ctx.groupId) {
+    if (session.ctx.role !== "student" || typeof groupId !== "string" || !inGroup(session.ctx, groupId)) {
       return NextResponse.json({ error: "groupId is required" }, { status: 400 })
     }
     if (!sessionId || typeof sessionId !== "string") {

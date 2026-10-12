@@ -6,6 +6,39 @@ import { Users } from "lucide-react"
 import { joinGroup } from "@/lib/classroom-actions"
 import type { JoinableGroup } from "@/lib/classroom"
 
+export function JoinSessionGroup({ groupId }: { groupId: string }) {
+  const router = useRouter()
+  const [pending, setPending] = useState(false)
+  const [error, setError] = useState("")
+
+  async function join() {
+    if (pending) return
+    setPending(true)
+    setError("")
+    const result = await joinGroup(groupId)
+    if (!result.ok) {
+      setError(result.error)
+      setPending(false)
+      return
+    }
+    router.refresh()
+  }
+
+  return (
+    <div className="mt-4">
+      <button
+        type="button"
+        disabled={pending}
+        onClick={() => void join()}
+        className="h-10 w-full rounded-xl bg-slate-900 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-60"
+      >
+        {pending ? "Joining..." : "Join group"}
+      </button>
+      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+    </div>
+  )
+}
+
 export default function JoinGroup({ groups }: { groups: JoinableGroup[] }) {
   const router = useRouter()
   const [pendingId, setPendingId] = useState<string | null>(null)
@@ -30,7 +63,7 @@ export default function JoinGroup({ groups }: { groups: JoinableGroup[] }) {
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Student</p>
         <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-900">Join a group</h1>
         <p className="mt-2 text-sm leading-relaxed text-slate-500">
-          Choose the group your teacher created. After you join, your teacher is the only person who can move you.
+          Choose a group in this session. You can join one group in each session, including sessions you open later.
         </p>
       </div>
 

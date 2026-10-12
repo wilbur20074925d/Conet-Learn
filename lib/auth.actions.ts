@@ -19,11 +19,5 @@ export async function signIn(email: string, password: string) {
     }
   }
 
-  redirect("/")
-}
-
-export async function logout() {
-  const supabase = await createClient()
-  await supabase.auth.signOut()
-  redirect("/login")
+  redirect("/dashboard")
 }

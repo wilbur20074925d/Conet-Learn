@@ -60,6 +60,19 @@ function missingColumn(message: string | undefined) {
   return /client_id|away|schema cache|column/i.test(message)
 }
 
+function missingRelationship(message: string | undefined) {
+  if (!message) return false
+  return /PGRST200|relationship|schema cache/i.test(message)
+}
+
+/** After the first 404/400, stop calling the missing presence API on every heartbeat. */
+let presenceRpc: "away" | "plain" | "table" | "off" = "away"
+let presenceEmbed: "full" | "no-away" | "ids" | "off" = "full"
+/** This database has no client_id column and no session-aware send RPC. */
+let messageClientId: "yes" | "no" = "no"
+let messageSend: "direct" | "session" | "legacy" = "direct"
+let nateSend: "direct" | "session" | "legacy" = "direct"
+
 export function isRetryableSendError(error: string) {
   const message = error.toLowerCase()
   return !(
@@ -88,21 +101,52 @@ export async function refreshRealtimeAuth(supabase: SupabaseClient) {
 }
 
 export async function fetchSessionUsers(supabase: SupabaseClient, groupId: string): Promise<SessionUser[] | null> {
+  if (presenceEmbed === "off") return []
   const since = new Date(Date.now() - AWAY_WINDOW_MS).toISOString()
   const load = (columns: string) =>
     supabase.from("ConetPresence").select(columns).eq("group_id", groupId).gte("last_seen", since)
 
-  let result = await load("user_id, last_seen, away, ConetUsers(id, name, role)")
-  if (result.error && missingColumn(result.error.message)) {
+  let result =
+    presenceEmbed === "full"
+      ? await load("user_id, last_seen, away, ConetUsers(id, name, role)")
+      : presenceEmbed === "no-away"
+        ? await load("user_id, last_seen, ConetUsers(id, name, role)")
+        : await load("user_id, last_seen")
+
+  if (result.error && presenceEmbed === "full" && missingColumn(result.error.message)) {
+    presenceEmbed = "no-away"
     result = await load("user_id, last_seen, ConetUsers(id, name, role)")
   }
-  if (result.error) return null
+  if (result.error && missingRelationship(result.error.message)) {
+    presenceEmbed = "ids"
+    result = await load("user_id, last_seen, away")
+    if (result.error && missingColumn(result.error.message)) {
+      result = await load("user_id, last_seen")
+    }
+  }
+  if (result.error) {
+    if (/PGRST205|does not exist|schema cache/i.test(result.error.message || "")) presenceEmbed = "off"
+    return null
+  }
+
+  const rows = (result.data || []) as unknown as PresenceRow[]
+  const names = new Map<string, { name: string; role: string }>()
+  if (presenceEmbed === "ids" && rows.length > 0) {
+    const people = await supabase
+      .from("ConetUsers")
+      .select("id, name, role")
+      .in("id", rows.map((row) => row.user_id))
+    for (const person of people.data || []) {
+      names.set(person.id as string, { name: person.name as string, role: person.role as string })
+    }
+  }
 
   const users: SessionUser[] = []
   const now = Date.now()
-  for (const row of (result.data || []) as unknown as PresenceRow[]) {
-    const person = Array.isArray(row.ConetUsers) ? row.ConetUsers[0] : row.ConetUsers
-    if (!person || person.role === "ai") continue
+  for (const row of rows) {
+    const embedded = Array.isArray(row.ConetUsers) ? row.ConetUsers[0] : row.ConetUsers
+    const person = embedded || names.get(row.user_id)
+    if (!person || person.role === "ai" || person.role === "teacher") continue
     const lastSeen = new Date(row.last_seen).getTime()
     users.push({
       id: row.user_id,
@@ -114,31 +158,45 @@ export async function fetchSessionUsers(supabase: SupabaseClient, groupId: strin
   return users
 }
 
-export async function touchPresence(supabase: SupabaseClient, groupId: string, userId: string, away = false) {
-  const rpc = await supabase.rpc("conet_touch_presence", { p_group_id: groupId, p_away: away })
-  if (!rpc.error) return true
-
-  if (missingFunction(rpc.error.message)) {
-    // Older database: hiding must not refresh last_seen, or the person stays "here".
-    if (away) return true
-    const retry = await supabase.rpc("conet_touch_presence", { p_group_id: groupId })
-    if (!retry.error) return true
-  }
-
+async function upsertPresence(supabase: SupabaseClient, groupId: string, userId: string, away: boolean) {
   const lastSeen = new Date().toISOString()
   const upsert = await supabase.from("ConetPresence").upsert(
     { group_id: groupId, user_id: userId, last_seen: lastSeen, away },
     { onConflict: "group_id,user_id" }
   )
   if (!upsert.error) return true
-  if (!missingColumn(upsert.error.message)) return false
+  if (!missingColumn(upsert.error.message)) {
+    if (/PGRST205|does not exist|schema cache/i.test(upsert.error.message || "")) presenceRpc = "off"
+    return false
+  }
   if (away) return true
-
   const plain = await supabase.from("ConetPresence").upsert(
     { group_id: groupId, user_id: userId, last_seen: lastSeen },
     { onConflict: "group_id,user_id" }
   )
+  if (plain.error && /PGRST205|does not exist|schema cache/i.test(plain.error.message || "")) presenceRpc = "off"
   return !plain.error
+}
+
+export async function touchPresence(supabase: SupabaseClient, groupId: string, userId: string, away = false) {
+  if (presenceRpc === "off") return false
+  if (presenceRpc === "table") return upsertPresence(supabase, groupId, userId, away)
+
+  if (presenceRpc === "away") {
+    const rpc = await supabase.rpc("conet_touch_presence", { p_group_id: groupId, p_away: away })
+    if (!rpc.error) return true
+    if (!missingFunction(rpc.error.message)) return upsertPresence(supabase, groupId, userId, away)
+    presenceRpc = "plain"
+  }
+
+  if (presenceRpc === "plain") {
+    if (away) return true
+    const retry = await supabase.rpc("conet_touch_presence", { p_group_id: groupId })
+    if (!retry.error) return true
+    presenceRpc = missingFunction(retry.error.message) ? "table" : "table"
+  }
+
+  return upsertPresence(supabase, groupId, userId, away)
 }
 
 async function existingClientMessage(supabase: SupabaseClient, clientId: string) {
@@ -168,6 +226,52 @@ async function soleRecentMatch(
   return data[0].id as string
 }
 
+async function sendViaRpc(
+  supabase: SupabaseClient,
+  groupId: string,
+  sessionId: string,
+  content: string,
+  replyTo: string | null,
+  clientId: string | null
+) {
+  if (messageSend === "legacy") {
+    const legacy = await supabase.rpc("conet_send_message", {
+      p_group_id: groupId,
+      p_content: content,
+      p_reply_to: replyTo,
+    })
+    if (!legacy.error && typeof legacy.data === "string") return legacy.data
+    if (missingFunction(legacy.error?.message)) messageSend = "direct"
+    return null
+  }
+
+  const payload = {
+    p_group_id: groupId,
+    p_session_id: sessionId,
+    p_content: content,
+    p_reply_to: replyTo,
+    ...(clientId && messageClientId === "yes" ? { p_client_id: clientId } : {}),
+  }
+  const rpc = await supabase.rpc("conet_send_message", payload)
+  if (!rpc.error && typeof rpc.data === "string") {
+    messageSend = "session"
+    return rpc.data
+  }
+  if (!missingFunction(rpc.error?.message)) return null
+
+  const legacy = await supabase.rpc("conet_send_message", {
+    p_group_id: groupId,
+    p_content: content,
+    p_reply_to: replyTo,
+  })
+  if (!legacy.error && typeof legacy.data === "string") {
+    messageSend = "legacy"
+    return legacy.data
+  }
+  messageSend = "direct"
+  return null
+}
+
 async function insertUserMessage(
   supabase: SupabaseClient,
   groupId: string,
@@ -179,33 +283,19 @@ async function insertUserMessage(
   createdAt: string | null,
   recover: boolean
 ) {
-  if (clientId) {
+  if (clientId && messageClientId === "yes") {
     const existing = await existingClientMessage(supabase, clientId)
     if (existing.id) return { id: existing.id, error: null as string | null, reused: true }
-    if (recover && existing.unsupported && createdAt) {
-      const matched = await soleRecentMatch(supabase, sessionId, userId, content, createdAt)
-      if (matched) return { id: matched, error: null as string | null, reused: true }
-    }
+    if (existing.unsupported) messageClientId = "no"
+  }
+  if (clientId && messageClientId !== "yes" && recover && createdAt) {
+    const matched = await soleRecentMatch(supabase, sessionId, userId, content, createdAt)
+    if (matched) return { id: matched, error: null as string | null, reused: true }
   }
 
-  const payload = {
-    p_group_id: groupId,
-    p_session_id: sessionId,
-    p_content: content,
-    p_reply_to: replyTo,
-    ...(clientId ? { p_client_id: clientId } : {}),
-  }
-  let rpc = await supabase.rpc("conet_send_message", payload)
-  if (rpc.error && clientId && missingFunction(rpc.error.message)) {
-    rpc = await supabase.rpc("conet_send_message", {
-      p_group_id: groupId,
-      p_session_id: sessionId,
-      p_content: content,
-      p_reply_to: replyTo,
-    })
-  }
-  if (!rpc.error && typeof rpc.data === "string") {
-    return { id: rpc.data, error: null as string | null, reused: false }
+  if (messageSend !== "direct") {
+    const id = await sendViaRpc(supabase, groupId, sessionId, content, replyTo, clientId)
+    if (id) return { id, error: null as string | null, reused: false }
   }
 
   const row: {
@@ -224,34 +314,53 @@ async function insertUserMessage(
     reply_to: replyTo,
     is_reply: Boolean(replyTo),
   }
-  if (clientId) row.client_id = clientId
+  if (clientId && messageClientId === "yes") row.client_id = clientId
 
   let direct = await supabase.from("ConetMessages").insert(row).select("id").single()
-  if (direct.error && clientId && missingColumn(direct.error.message)) {
+  if (direct.error && row.client_id && missingColumn(direct.error.message)) {
+    messageClientId = "no"
     delete row.client_id
     direct = await supabase.from("ConetMessages").insert(row).select("id").single()
   }
-  if (direct.error?.code === "23505" && clientId) {
+  if (direct.error?.code === "23505" && clientId && messageClientId === "yes") {
     const existing = await existingClientMessage(supabase, clientId)
     if (existing.id) return { id: existing.id, error: null as string | null, reused: true }
   }
-  if (direct.error || !direct.data) {
-    return {
-      id: null as string | null,
-      error: direct.error?.message || rpc.error?.message || "Failed to send",
-      reused: false,
-    }
+  if (!direct.error && direct.data) {
+    return { id: direct.data.id as string, error: null as string | null, reused: false }
   }
-  return { id: direct.data.id as string, error: null as string | null, reused: false }
+
+  if (messageSend === "direct" && direct.error && /42501|row-level security|permission/i.test(direct.error.message)) {
+    messageSend = "session"
+    const id = await sendViaRpc(supabase, groupId, sessionId, content, replyTo, clientId)
+    if (id) return { id, error: null as string | null, reused: false }
+  }
+
+  return {
+    id: null as string | null,
+    error: direct.error?.message || "Failed to send",
+    reused: false,
+  }
 }
 
 async function insertNateThinking(supabase: SupabaseClient, groupId: string, sessionId: string) {
-  const rpc = await supabase.rpc("conet_post_nate_message", {
-    p_group_id: groupId,
-    p_session_id: sessionId,
-    p_content: NATE_THINKING,
-  })
-  if (!rpc.error && typeof rpc.data === "string") return rpc.data as string
+  if (nateSend === "session") {
+    const rpc = await supabase.rpc("conet_post_nate_message", {
+      p_group_id: groupId,
+      p_session_id: sessionId,
+      p_content: NATE_THINKING,
+    })
+    if (!rpc.error && typeof rpc.data === "string") return rpc.data
+    if (missingFunction(rpc.error?.message)) nateSend = "legacy"
+  }
+  if (nateSend === "legacy") {
+    const rpc = await supabase.rpc("conet_post_nate_message", {
+      p_group_id: groupId,
+      p_content: NATE_THINKING,
+    })
+    if (!rpc.error && typeof rpc.data === "string") return rpc.data
+    if (missingFunction(rpc.error?.message)) nateSend = "direct"
+  }
 
   const direct = await supabase
     .from("ConetMessages")

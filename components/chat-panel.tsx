@@ -25,11 +25,26 @@ import {
 } from "@/lib/seminar-sync"
 import { isTempSessionId } from "@/lib/session-browser"
 import { createClient } from "@/lib/supabase/browser"
+import { connectChatRoom, publishChatMessage, renameChatMessage } from "@/lib/yjs/yjsChatChannel"
 import { BookOpen, Check, Copy, Reply, SendHorizonal, X } from "lucide-react"
+
+type MentionPerson = {
+  id: string
+  name: string
+}
+
+function readMention(value: string, cursor: number) {
+  const before = value.slice(0, Math.max(0, cursor))
+  const match = /(?:^|\s)@([^\s@]*)$/.exec(before)
+  if (!match) return null
+  const query = match[1]
+  return { query, start: before.length - query.length - 1 }
+}
 
 const ChatInputForm = memo(function ChatInputForm({
   currentUserId,
   currentUserName,
+  people,
   replyingTo,
   onCancelReply,
   newintervene,
@@ -38,6 +53,7 @@ const ChatInputForm = memo(function ChatInputForm({
 }: {
   currentUserId: string
   currentUserName: string
+  people: MentionPerson[]
   replyingTo: Message | null
   onCancelReply: () => void
   newintervene: number
@@ -45,11 +61,72 @@ const ChatInputForm = memo(function ChatInputForm({
   onQueueSend: (item: QueuedSend) => void
 }) {
   const [inputValue, setInputValue] = useState("")
+  const [mention, setMention] = useState<{ query: string; start: number } | null>(null)
+  const [activeIndex, setActiveIndex] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLUListElement>(null)
 
   useEffect(() => {
     setInputValue("")
+    setMention(null)
   }, [replyingTo])
+
+  const roster = useMemo(() => {
+    const byId = new Map<string, MentionPerson & { nate?: boolean }>()
+    byId.set(NATE_USER_ID, { id: NATE_USER_ID, name: "NATE", nate: true })
+    for (const person of people) {
+      if (person.id === NATE_USER_ID) continue
+      const name = person.name.trim()
+      if (!name) continue
+      byId.set(person.id, { id: person.id, name })
+    }
+    if (currentUserId && !byId.has(currentUserId) && currentUserName.trim()) {
+      byId.set(currentUserId, { id: currentUserId, name: currentUserName.trim() })
+    }
+    const nate = byId.get(NATE_USER_ID)!
+    const rest = [...byId.values()]
+      .filter((person) => person.id !== NATE_USER_ID)
+      .sort((a, b) => a.name.localeCompare(b.name))
+    return [nate, ...rest]
+  }, [currentUserId, currentUserName, people])
+
+  const suggestions = useMemo(() => {
+    if (!mention) return []
+    const query = mention.query.trim().toLowerCase()
+    if (!query) return roster
+    return roster.filter((person) => person.name.toLowerCase().includes(query))
+  }, [mention, roster])
+
+  const menuOpen = mention !== null && suggestions.length > 0
+  const highlighted = menuOpen ? Math.min(activeIndex, suggestions.length - 1) : 0
+
+  useEffect(() => {
+    if (!menuOpen) return
+    const item = listRef.current?.querySelector<HTMLElement>('[data-active="true"]')
+    item?.scrollIntoView({ block: "nearest" })
+  }, [highlighted, menuOpen, suggestions])
+
+  const syncMention = (value: string, cursor: number) => {
+    const next = readMention(value, cursor)
+    setMention(next)
+    if (!next) setActiveIndex(0)
+  }
+
+  const chooseMention = (person: MentionPerson) => {
+    const cursor = inputRef.current?.selectionStart ?? inputValue.length
+    const current = readMention(inputValue, cursor)
+    if (!current) return
+    const insert = `@${person.name} `
+    const next = inputValue.slice(0, current.start) + insert + inputValue.slice(cursor)
+    const nextCursor = current.start + insert.length
+    setInputValue(next)
+    setMention(null)
+    setActiveIndex(0)
+    requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.setSelectionRange(nextCursor, nextCursor)
+    })
+  }
 
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -74,6 +151,7 @@ const ChatInputForm = memo(function ChatInputForm({
     }
 
     setInputValue("")
+    setMention(null)
     onCancelReply()
     onOptimisticSend(optimistic)
     onQueueSend({
@@ -102,17 +180,103 @@ const ChatInputForm = memo(function ChatInputForm({
       )}
       <form onSubmit={submit} className="flex items-center gap-2">
         <div className="relative flex-1">
+          {mention && suggestions.length === 0 && (
+            <div className="absolute bottom-full left-0 z-20 mb-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-500 shadow-lg">
+              No one matches “{mention.query}”
+            </div>
+          )}
+          {menuOpen && (
+            <ul
+              ref={listRef}
+              id="chat-mention-list"
+              role="listbox"
+              aria-label="Mention someone"
+              className="absolute bottom-full left-0 z-20 mb-2 max-h-56 w-full overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg"
+            >
+              {suggestions.map((person, index) => {
+                const active = index === highlighted
+                const you = person.id === currentUserId
+                return (
+                  <li key={person.id} role="presentation">
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected={active}
+                      data-active={active ? "true" : "false"}
+                      onMouseDown={(event) => event.preventDefault()}
+                      onMouseEnter={() => setActiveIndex(index)}
+                      onClick={() => chooseMention(person)}
+                      className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${
+                        active ? "bg-slate-100" : "bg-white"
+                      }`}
+                    >
+                      {person.nate ? (
+                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[10px] font-bold text-white">
+                          N
+                        </span>
+                      ) : (
+                        <SeminarIcon className="h-6 w-6" iconClassName="h-3 w-3" />
+                      )}
+                      <span className="min-w-0 truncate font-semibold text-slate-800">
+                        {person.name}
+                        {you ? <span className="ml-1.5 font-medium text-slate-400">you</span> : null}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
           <Input
             ref={inputRef}
             name="message"
             value={inputValue}
-            onChange={(event) => setInputValue(event.target.value)}
+            role="combobox"
+            aria-expanded={menuOpen}
+            aria-autocomplete="list"
+            aria-controls={menuOpen ? "chat-mention-list" : undefined}
+            onChange={(event) => {
+              const value = event.target.value
+              setInputValue(value)
+              setActiveIndex(0)
+              syncMention(value, event.target.selectionStart ?? value.length)
+            }}
+            onClick={(event) => {
+              const target = event.currentTarget
+              syncMention(target.value, target.selectionStart ?? target.value.length)
+            }}
+            onKeyUp={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight" && event.key !== "Home" && event.key !== "End") return
+              const target = event.currentTarget
+              syncMention(target.value, target.selectionStart ?? target.value.length)
+            }}
+            onSelect={(event) => {
+              const target = event.currentTarget
+              syncMention(target.value, target.selectionStart ?? target.value.length)
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape" && mention) {
+                event.preventDefault()
+                setMention(null)
+                return
+              }
+              if (!menuOpen) return
+              if (event.key === "ArrowDown") {
+                event.preventDefault()
+                setActiveIndex((index) => (index + 1) % suggestions.length)
+              } else if (event.key === "ArrowUp") {
+                event.preventDefault()
+                setActiveIndex((index) => (index - 1 + suggestions.length) % suggestions.length)
+              } else if (event.key === "Enter" || event.key === "Tab") {
+                event.preventDefault()
+                chooseMention(suggestions[highlighted])
+              }
+            }}
+            onBlur={() => setMention(null)}
             placeholder={
               replyingTo
                 ? `Reply to ${replyingTo.name}...`
-                : newintervene === 3
-                  ? "Write to your group..."
-                  : "Write to your group, or mention @NATE"
+                : "Write to your group, or type @ to mention someone"
             }
             autoComplete="off"
             className="h-11 rounded-xl border-slate-200 bg-white pr-12 shadow-none focus-visible:ring-slate-900/20"
@@ -123,6 +287,7 @@ const ChatInputForm = memo(function ChatInputForm({
                 const cursor = inputRef.current?.selectionStart || inputValue.length
                 const next = inputValue.slice(0, cursor) + emoji + inputValue.slice(cursor)
                 setInputValue(next)
+                setMention(null)
                 setTimeout(() => {
                   inputRef.current?.focus()
                   inputRef.current?.setSelectionRange(cursor + emoji.length, cursor + emoji.length)
@@ -184,22 +349,254 @@ function escapeHtml(value: string) {
     .replace(/"/g, "&quot;")
 }
 
-function renderMarkdown(raw: string) {
-  let text = escapeHtml(raw)
+function highlightMentions(text: string, names: string[]) {
+  const needles = [...new Set(["NATE", ...names.map((name) => name.trim()).filter(Boolean)])]
+    .map((name) => `@${escapeHtml(name)}`)
+    .sort((a, b) => b.length - a.length)
+  if (needles.length === 0) return text
+
+  const lower = text.toLowerCase()
+  const taken: Array<[number, number]> = []
+  const hits: Array<{ start: number; end: number }> = []
+  for (const needle of needles) {
+    const target = needle.toLowerCase()
+    let from = 0
+    while (from < text.length) {
+      const start = lower.indexOf(target, from)
+      if (start === -1) break
+      const end = start + needle.length
+      const overlaps = taken.some(([left, right]) => start < right && end > left)
+      const next = text[end]
+      const boundary = end === text.length || !/[\w]/.test(next)
+      if (!overlaps && boundary) {
+        hits.push({ start, end })
+        taken.push([start, end])
+      }
+      from = start + 1
+    }
+  }
+  hits.sort((a, b) => a.start - b.start)
+  let cursor = 0
+  let out = ""
+  for (const hit of hits) {
+    out += text.slice(cursor, hit.start)
+    out += `<span class="font-semibold underline decoration-2 underline-offset-2">${text.slice(hit.start, hit.end)}</span>`
+    cursor = hit.end
+  }
+  return out + text.slice(cursor)
+}
+
+const CODE_KEYWORDS: Record<string, string[]> = {
+  js: ["const", "let", "var", "function", "return", "if", "else", "for", "while", "class", "import", "export", "from", "async", "await", "new", "this", "try", "catch", "throw", "switch", "case", "break", "continue", "typeof", "true", "false", "null", "undefined"],
+  py: ["def", "return", "if", "else", "elif", "for", "while", "class", "import", "from", "as", "with", "try", "except", "lambda", "yield", "True", "False", "None", "in", "not", "and", "or", "pass", "break", "continue"],
+  sql: ["select", "from", "where", "and", "or", "insert", "into", "values", "update", "set", "delete", "create", "table", "join", "on", "group", "by", "order", "limit", "as"],
+  css: ["color", "background", "display", "flex", "grid", "margin", "padding", "width", "height", "font", "border", "position", "content"],
+}
+
+function codeLanguage(language: string) {
+  const lang = language.trim().toLowerCase()
+  if (["js", "jsx", "javascript", "ts", "tsx", "typescript"].includes(lang)) return "js"
+  if (["py", "python"].includes(lang)) return "py"
+  if (["html", "htm", "xml", "svg"].includes(lang)) return "html"
+  if (["css", "scss"].includes(lang)) return "css"
+  if (["sh", "bash", "shell", "zsh"].includes(lang)) return "bash"
+  if (lang === "sql") return "sql"
+  if (lang === "json") return "json"
+  return lang || "text"
+}
+
+function canPreviewCode(language: string, code: string) {
+  const lang = codeLanguage(language)
+  if (lang === "html") return true
+  const trimmed = code.trim()
+  return trimmed.startsWith("<") && /<\/?[a-z][\s\S]*>/i.test(trimmed)
+}
+
+function highlightCode(code: string, language: string) {
+  const lang = codeLanguage(language)
+  const keywords = new Set(CODE_KEYWORDS[lang] ?? CODE_KEYWORDS.js)
+  const tokens: Array<{ text: string; kind: string | null }> = []
+  let index = 0
+
+  const push = (text: string, kind: string | null) => {
+    if (text) tokens.push({ text, kind })
+  }
+
+  while (index < code.length) {
+    if (lang === "html" && code.startsWith("<!--", index)) {
+      const end = code.indexOf("-->", index + 4)
+      const stop = end === -1 ? code.length : end + 3
+      push(code.slice(index, stop), "comment")
+      index = stop
+      continue
+    }
+    if (lang === "html" && code[index] === "<") {
+      const end = code.indexOf(">", index + 1)
+      const stop = end === -1 ? code.length : end + 1
+      push(code.slice(index, stop), "tag")
+      index = stop
+      continue
+    }
+    if (code.startsWith("/*", index)) {
+      const end = code.indexOf("*/", index + 2)
+      const stop = end === -1 ? code.length : end + 2
+      push(code.slice(index, stop), "comment")
+      index = stop
+      continue
+    }
+    if ((lang === "py" || lang === "bash") && code[index] === "#") {
+      const end = code.indexOf("\n", index)
+      const stop = end === -1 ? code.length : end
+      push(code.slice(index, stop), "comment")
+      index = stop
+      continue
+    }
+    if (lang !== "html" && lang !== "css" && code.startsWith("//", index)) {
+      const end = code.indexOf("\n", index)
+      const stop = end === -1 ? code.length : end
+      push(code.slice(index, stop), "comment")
+      index = stop
+      continue
+    }
+    const quote = code[index]
+    if (quote === '"' || quote === "'" || quote === "`") {
+      let end = index + 1
+      while (end < code.length) {
+        if (code[end] === "\\") {
+          end += 2
+          continue
+        }
+        if (code[end] === quote) {
+          end += 1
+          break
+        }
+        if (code[end] === "\n" && quote !== "`") break
+        end += 1
+      }
+      push(code.slice(index, end), "string")
+      index = end
+      continue
+    }
+    if (/[0-9]/.test(code[index] ?? "") && (index === 0 || !/[\w]/.test(code[index - 1] ?? ""))) {
+      let end = index
+      while (end < code.length && /[0-9._xXa-fA-F]/.test(code[end] ?? "")) end += 1
+      push(code.slice(index, end), "number")
+      index = end
+      continue
+    }
+    if (/[A-Za-z_]/.test(code[index] ?? "")) {
+      let end = index
+      while (end < code.length && /[\w]/.test(code[end] ?? "")) end += 1
+      const word = code.slice(index, end)
+      push(word, keywords.has(word) || (lang === "sql" && keywords.has(word.toLowerCase())) ? "keyword" : null)
+      index = end
+      continue
+    }
+    push(code[index] ?? "", null)
+    index += 1
+  }
+
+  const classFor = (kind: string | null) => {
+    if (kind === "keyword" || kind === "tag") return "text-sky-300"
+    if (kind === "string") return "text-emerald-300"
+    if (kind === "comment") return "text-slate-500"
+    if (kind === "number") return "text-amber-200"
+    return ""
+  }
+
+  return tokens
+    .map((token) => {
+      const safe = escapeHtml(token.text)
+      const className = classFor(token.kind)
+      return className ? `<span class="${className}">${safe}</span>` : safe
+    })
+    .join("")
+}
+
+function previewDocument(code: string, language: string) {
+  const trimmed = code.trim()
+  if (codeLanguage(language) === "html" && (language.toLowerCase() === "svg" || trimmed.startsWith("<svg"))) {
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>html,body{margin:0;background:#fff}body{display:flex;align-items:center;justify-content:center;min-height:100%;padding:12px}</style></head><body>${code}</body></html>`
+  }
+  if (/<html[\s>]/i.test(code)) return code
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{margin:0;font-family:ui-sans-serif,system-ui,sans-serif;padding:12px}</style></head><body>${code}</body></html>`
+}
+
+function renderCodeBlock(code: string, language: string, preview: boolean) {
+  const label = language.trim() || "code"
+  const highlighted = highlightCode(code.replace(/\n$/, ""), language)
+  const block = `<div class="my-2 overflow-hidden rounded-xl border border-slate-800 bg-slate-950"><div class="border-b border-white/10 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">${escapeHtml(label)}</div><pre class="overflow-x-auto px-3 py-2.5 text-[13px] leading-relaxed text-slate-100"><code>${highlighted}</code></pre></div>`
+  if (!preview || !canPreviewCode(language, code)) return block
+  const src = previewDocument(code, language).replace(/&/g, "&amp;").replace(/"/g, "&quot;")
+  return `${block}<div class="my-2 overflow-hidden rounded-xl border border-slate-200 bg-white"><div class="border-b border-slate-100 px-3 py-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">Rendered</div><iframe sandbox="" referrerpolicy="no-referrer" title="Rendered code" class="h-44 w-full bg-white" srcdoc="${src}"></iframe></div>`
+}
+
+function splitCodeFences(raw: string) {
+  const parts: Array<{ type: "text"; text: string } | { type: "code"; language: string; code: string }> = []
+  const pattern = /```([^\n`]*)\n([\s\S]*?)```/g
+  let last = 0
+  let match: RegExpExecArray | null
+  while ((match = pattern.exec(raw))) {
+    if (match.index > last) parts.push({ type: "text", text: raw.slice(last, match.index) })
+    parts.push({ type: "code", language: match[1].trim(), code: match[2] })
+    last = match.index + match[0].length
+  }
+  const rest = raw.slice(last)
+  const unclosed = /```([^\n`]*)\n([\s\S]*)$/.exec(rest)
+  if (unclosed && unclosed.index !== undefined) {
+    if (unclosed.index > 0) parts.push({ type: "text", text: rest.slice(0, unclosed.index) })
+    parts.push({ type: "code", language: unclosed[1].trim(), code: unclosed[2] })
+  } else if (rest) {
+    parts.push({ type: "text", text: rest })
+  }
+  return parts
+}
+
+function renderInlineMarkdown(raw: string, mentionNames: string[]) {
+  let text = highlightMentions(escapeHtml(raw), mentionNames)
   text = text.replace(/^###\s*(.+)$/gm, '<h3 class="mt-2 mb-1 text-sm font-semibold">$1</h3>')
   text = text.replace(/^##\s*(.+)$/gm, '<h2 class="mt-3 mb-1 text-base font-semibold">$1</h2>')
   text = text.replace(/^#\s*(.+)$/gm, '<h1 class="mt-3 mb-1 text-lg font-semibold">$1</h1>')
   text = text.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
   text = text.replace(/\*(.*?)\*/g, "<em>$1</em>")
-  text = text.replace(/`(.*?)`/g, '<code class="rounded bg-black/5 px-1 py-0.5 text-[0.85em]">$1</code>')
+  text = text.replace(/`([^`\n]+)`/g, '<code class="rounded bg-black/5 px-1 py-0.5 text-[0.85em]">$1</code>')
   text = text.replace(/\n/g, "<br>")
   return text
 }
 
-const MessageContent = memo(function MessageContent({ content, className }: { content: string; className?: string }) {
-  const html = useMemo(() => renderMarkdown(content), [content])
+function renderMarkdown(raw: string, mentionNames: string[] = [], preview = false) {
+  return splitCodeFences(raw)
+    .map((part) =>
+      part.type === "code" ? renderCodeBlock(part.code, part.language, preview) : renderInlineMarkdown(part.text, mentionNames)
+    )
+    .join("")
+}
+
+const EMPTY_MENTIONS: string[] = []
+
+const MessageContent = memo(function MessageContent({
+  content,
+  className,
+  mentionNames = EMPTY_MENTIONS,
+  previewCode = false,
+}: {
+  content: string
+  className?: string
+  mentionNames?: string[]
+  previewCode?: boolean
+}) {
+  const html = useMemo(() => renderMarkdown(content, mentionNames, previewCode), [content, mentionNames, previewCode])
   return <div className={className ?? "text-sm leading-relaxed break-words"} dangerouslySetInnerHTML={{ __html: html }} />
 })
+
+function TypingContent({ content, className }: { content: string; className?: string }) {
+  const html = useMemo(() => {
+    const caret =
+      '<span class="ml-0.5 inline-block h-[1em] w-[1.5px] translate-y-px bg-slate-800 align-text-bottom animate-pulse"></span>'
+    return `${renderMarkdown(content, [], true)}${caret}`
+  }, [content])
+  return <div className={className ?? "text-sm leading-relaxed break-words"} dangerouslySetInnerHTML={{ __html: html }} />
+}
 
 function rawToMessage(row: RawMessage, prev: Message[]): Message {
   const mapped = mapMessageRows([row])[0]
@@ -217,21 +614,15 @@ function rawToMessage(row: RawMessage, prev: Message[]): Message {
   }
 }
 
-const NATE_THINKING_STEPS = [
-  { label: "Reading your question", detail: "Picking out the key ideas" },
-  { label: "Looking back at this chat", detail: "Connecting to earlier turns" },
-  { label: "Drafting a reply", detail: "Keeping it clear and concise" },
-]
-
 function nextTypedLength(text: string, index: number) {
   if (index >= text.length) return text.length
-  const rest = text.slice(index)
-  if (rest.startsWith("```")) {
-    const end = rest.indexOf("```", 3)
-    return end === -1 ? text.length : index + end + 3
+  const step = Math.max(1, Math.ceil(text.length / 160))
+  let next = Math.min(text.length, index + step)
+  if (step > 1 && next < text.length && /\S/.test(text[next - 1] ?? "") && /\S/.test(text[next] ?? "")) {
+    const space = text.indexOf(" ", next)
+    next = space === -1 ? text.length : space + 1
   }
-  const match = rest.match(/^(\s*\S+\s*)/)
-  return match ? index + Math.min(match[1].length, 28) : index + 1
+  return next
 }
 
 function formatBubbleTime(value: string) {
@@ -250,74 +641,40 @@ function BubbleTime({ value }: { value: string }) {
   return <span className="text-[11px] text-slate-400">{label}</span>
 }
 
-function NateAvatar({ thinking = false }: { thinking?: boolean }) {
+function NateAvatar() {
   return (
     <div className="relative mt-0.5 h-8 w-8 shrink-0">
       <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-slate-900 text-[11px] font-bold text-white ring-1 ring-slate-200">
         N
       </div>
-      {thinking && (
-        <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 animate-pulse rounded-full border-2 border-white bg-slate-700" />
-      )}
     </div>
   )
 }
 
-function NateThinkingCard({ startedAt }: { startedAt: string }) {
-  const [elapsed, setElapsed] = useState(0)
-
-  useEffect(() => {
-    const tick = () => {
-      const started = new Date(startedAt).getTime()
-      setElapsed(Math.max(0, Math.floor((Date.now() - started) / 1000)))
-    }
-    tick()
-    const timer = window.setInterval(tick, 1000)
-    return () => window.clearInterval(timer)
-  }, [startedAt])
-
-  const step = Math.floor(elapsed / 2.2) % NATE_THINKING_STEPS.length
-  const current = NATE_THINKING_STEPS[step]
-
+function NateThinkingCard() {
   return (
     <div className="flex justify-start gap-2.5">
-      <NateAvatar thinking />
+      <NateAvatar />
       <div
-        className="min-w-0 max-w-[min(92%,34rem)] flex-1 overflow-hidden rounded-2xl rounded-bl-md border border-slate-200 bg-white shadow-sm"
+        className="rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2.5 shadow-sm"
         role="status"
         aria-live="polite"
-        aria-label="NATE is preparing a reply"
+        aria-label="Nate is thinking"
       >
-        <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-1.5">
-          <div className="flex items-center gap-1.5">
-            <span className="text-xs font-semibold text-slate-800">NATE</span>
-            <span className="rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
-              Working
-            </span>
-          </div>
-          <span className="font-mono text-[11px] tabular-nums text-slate-400">{elapsed}s</span>
-        </div>
-        <div className="px-3 py-2.5">
-          <p className="text-sm font-medium text-slate-800">{current.label}</p>
-          <p className="mt-0.5 text-xs text-slate-500">{current.detail}</p>
-          <div className="mt-2 flex items-center gap-1.5">
-            {NATE_THINKING_STEPS.map((item, index) => (
+        <p className="text-sm font-medium text-slate-700">
+          Nate is thinking
+          <span className="inline-flex w-[1.15em]" aria-hidden="true">
+            {[0, 1, 2].map((dot) => (
               <span
-                key={item.label}
-                className={`h-1 flex-1 rounded-full transition-colors duration-300 ${index <= step ? "bg-slate-700" : "bg-slate-200"}`}
-              />
+                key={dot}
+                className="animate-nate-ellipsis"
+                style={{ animationDelay: `${dot * 0.18}s` }}
+              >
+                .
+              </span>
             ))}
-          </div>
-        </div>
-        <div className="flex items-center gap-1 border-t border-slate-100 bg-slate-50/80 px-3 py-1.5">
-          {[0, 1, 2].map((dot) => (
-            <span
-              key={dot}
-              className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-500"
-              style={{ animationDelay: `${dot * 0.12}s` }}
-            />
-          ))}
-        </div>
+          </span>
+        </p>
       </div>
     </div>
   )
@@ -339,6 +696,7 @@ function NateReplyCard({
   const [shown, setShown] = useState(reveal ? "" : content)
   const [typing, setTyping] = useState(reveal)
   const [copied, setCopied] = useState(false)
+  const cardRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!reveal) {
@@ -349,14 +707,20 @@ function NateReplyCard({
     let index = 0
     setTyping(true)
     setShown("")
+    const root = cardRef.current
     const timer = window.setInterval(() => {
       index = nextTypedLength(content, index)
       setShown(content.slice(0, index))
+      const scroller = root?.closest("[data-radix-scroll-area-viewport]")
+      if (scroller instanceof HTMLElement) {
+        const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
+        if (distance < 96) scroller.scrollTop = scroller.scrollHeight
+      }
       if (index >= content.length) {
         window.clearInterval(timer)
         setTyping(false)
       }
-    }, 24)
+    }, 32)
     return () => window.clearInterval(timer)
   }, [content, reveal])
 
@@ -371,7 +735,7 @@ function NateReplyCard({
   }
 
   return (
-    <div className="group flex justify-start gap-2.5">
+    <div ref={cardRef} className="group flex justify-start gap-2.5">
       <NateAvatar />
       <div className="min-w-0 max-w-[min(92%,34rem)] flex-1 overflow-hidden rounded-2xl rounded-bl-md border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-1.5">
@@ -400,8 +764,11 @@ function NateReplyCard({
               <p className="truncate">{quote.content}</p>
             </div>
           )}
-          <MessageContent content={shown} className="text-[15px] leading-relaxed break-words" />
-          {typing && <span className="ml-0.5 inline-block h-4 w-[1.5px] translate-y-0.5 bg-slate-800 align-middle animate-pulse" />}
+          {typing ? (
+            <TypingContent content={shown} className="text-[15px] leading-relaxed break-words" />
+          ) : (
+            <MessageContent content={shown} previewCode className="text-[15px] leading-relaxed break-words" />
+          )}
         </div>
         <div className="flex items-center justify-between gap-2 border-t border-slate-100 bg-slate-50/80 px-3 py-1.5">
           <BubbleTime value={createdAt} />
@@ -419,6 +786,17 @@ function NateReplyCard({
       </div>
     </div>
   )
+}
+
+function upsertLiveMessages(prev: Message[], incoming: Message[]) {
+  if (incoming.length === 0) return prev
+  let next = prev
+  for (const message of incoming) {
+    const index = next.findIndex((item) => item.id === message.id)
+    if (index === -1) next = [...next, message]
+    else next = next.map((item, itemIndex) => (itemIndex === index ? { ...item, ...message } : item))
+  }
+  return next.sort((a, b) => a.created_at.localeCompare(b.created_at))
 }
 
 function withPending(prev: Message[], latest: Message[]) {
@@ -478,11 +856,15 @@ export default function ChatPanel({
   const [replyingTo, setReplyingTo] = useState<Message | null>(null)
   const [liveUsers, setLiveUsers] = useState<SessionUser[]>([])
   const [dbUsers, setDbUsers] = useState<SessionUser[]>([])
+  const [groupPeople, setGroupPeople] = useState<MentionPerson[]>([])
   const [linkStatus, setLinkStatus] = useState<"live" | "reconnecting">("live")
   const [tabHidden, setTabHidden] = useState(false)
   const [sendNotes, setSendNotes] = useState<Record<string, string>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const revealIds = useRef(new Set<string>())
+  const seenNateReplyIds = useRef<Set<string> | null>(null)
+  const nateTypeArmed = useRef(false)
+  const skipEmptyNateBaseline = useRef(initialMessages.length === 0)
   const outboxRef = useRef(new Map<string, OutboxItem>())
   const flushingRef = useRef(new Set<string>())
   const timersRef = useRef(new Map<string, number>())
@@ -503,42 +885,40 @@ export default function ChatPanel({
 
   const handleOptimisticSend = useCallback((message: Message) => {
     setMessages((prev) => [...prev, message])
-  }, [])
+    publishChatMessage(sessionId, message)
+  }, [sessionId])
 
   const handleSendConfirmed = useCallback((tempId: string, realId: string) => {
     setMessages((prev) =>
       prev.map((message) => (message.id === tempId ? { ...message, id: realId } : message))
     )
+    renameChatMessage(sessionId, tempId, realId)
     setSendNotes((prev) => {
       if (!prev[tempId]) return prev
       const next = { ...prev }
       delete next[tempId]
       return next
     })
-  }, [])
+  }, [sessionId])
 
   const handleThinking = useCallback(
     (thinkingId: string) => {
       const alreadyStarted = startedNateReplies.has(thinkingId)
       startedNateReplies.add(thinkingId)
-      setMessages((prev) => {
-        if (prev.some((message) => message.id === thinkingId)) return prev
-        return [
-          ...prev,
-          {
-            id: thinkingId,
-            content: NATE_THINKING,
-            created_at: new Date().toISOString(),
-            user_id: NATE_USER_ID,
-            name: "NATE",
-            avatar_url: null,
-            is_ai: true,
-            reply_to: null,
-            is_reply: false,
-            original_message: null,
-          },
-        ]
-      })
+      const thinking: Message = {
+        id: thinkingId,
+        content: NATE_THINKING,
+        created_at: new Date().toISOString(),
+        user_id: NATE_USER_ID,
+        name: "NATE",
+        avatar_url: null,
+        is_ai: true,
+        reply_to: null,
+        is_reply: false,
+        original_message: null,
+      }
+      setMessages((prev) => (prev.some((message) => message.id === thinkingId) ? prev : [...prev, thinking]))
+      publishChatMessage(sessionId, thinking)
       if (!alreadyStarted) void finishNateReply(groupId, sessionId, thinkingId)
     },
     [groupId, sessionId]
@@ -666,10 +1046,55 @@ export default function ChatPanel({
   }, [messages.length])
 
   useEffect(() => {
+    if (pendingSession) return
+    const room = connectChatRoom(sessionId, currentUserId, currentUserName)
+    const unsubscribe = room.subscribe((incoming) => {
+      setMessages((prev) => upsertLiveMessages(prev, incoming))
+      setMessagesLoaded(true)
+    })
+    return () => {
+      unsubscribe()
+      room.disconnect()
+    }
+  }, [currentUserId, currentUserName, pendingSession, sessionId])
+
+  useEffect(() => {
     if (initialMessages.length === 0) return
     setMessages((prev) => (prev.length === 0 ? initialMessages : prev))
     setMessagesLoaded(true)
   }, [initialMessages])
+
+  useEffect(() => {
+    if (readOnly || pendingSession) return
+    let stopped = false
+    const supabase = createClient()
+    void supabase
+      .from("ConetGroupMembers")
+      .select("user_id, ConetUsers(id, name, role)")
+      .eq("group_id", groupId)
+      .then(({ data }) => {
+        if (stopped || !data) return
+        const people: MentionPerson[] = []
+        for (const row of data as Array<{
+          user_id: string
+          ConetUsers:
+            | { id: string; name: string; role: string }
+            | { id: string; name: string; role: string }[]
+            | null
+        }>) {
+          const person = Array.isArray(row.ConetUsers) ? row.ConetUsers[0] : row.ConetUsers
+          if (!person || person.role === "ai" || person.role === "teacher") continue
+          const name = person.name?.trim()
+          if (!name) continue
+          people.push({ id: person.id || row.user_id, name })
+        }
+        people.sort((a, b) => a.name.localeCompare(b.name))
+        setGroupPeople(people)
+      })
+    return () => {
+      stopped = true
+    }
+  }, [groupId, pendingSession, readOnly])
 
   useEffect(() => {
     if (pendingSession) {
@@ -697,7 +1122,11 @@ export default function ChatPanel({
       }
       const row = await fetchMessageById(supabase, messageId)
       if (stopped || !row) return
-      setMessages((prev) => mergeIncomingMessage(prev, rawToMessage(row, prev)))
+      setMessages((prev) => {
+        const message = rawToMessage(row, prev)
+        publishChatMessage(sessionId, message)
+        return mergeIncomingMessage(prev, message)
+      })
     }
 
     const reconcileMessages = async () => {
@@ -729,7 +1158,7 @@ export default function ChatPanel({
         await refreshRealtimeAuth(supabase)
         if (!readOnly) {
           await touchPresence(supabase, groupId, currentUserId, false)
-          if (room.state === "joined") await room.track({ name: currentUserName, seminar: groupName })
+          if (room.state === "joined") await room.track({ name: currentUserName, seminar: groupName, role: "student" })
         }
         await reconcileMessages()
         await refreshPresence()
@@ -776,8 +1205,9 @@ export default function ChatPanel({
         }
       )
       .on("presence", { event: "sync" }, () => {
-        const state = room.presenceState<{ name?: string }>()
+        const state = room.presenceState<{ name?: string; role?: string }>()
         const users = Object.entries(state)
+          .filter(([, metas]) => metas[0]?.role !== "teacher")
           .map(([id, metas]) => ({
             id,
             name: metas[0]?.name || "Member",
@@ -802,7 +1232,7 @@ export default function ChatPanel({
         if (document.visibilityState === "hidden") return
         void (async () => {
           if (!readOnly) {
-            await room.track({ name: currentUserName, seminar: groupName })
+            await room.track({ name: currentUserName, seminar: groupName, role: "student" })
             await touchPresence(supabase, groupId, currentUserId, false)
           }
           await refreshPresence()
@@ -891,8 +1321,33 @@ export default function ChatPanel({
     }
   }, [groupId, groupName, sessionId, currentUserId, currentUserName, readOnly, pendingSession])
 
+  if (messagesLoaded) {
+    const replyIds = messages
+      .filter((message) => message.is_ai && message.content !== NATE_THINKING)
+      .map((message) => message.id)
+    const thinkingVisible = messages.some((message) => message.is_ai && message.content === NATE_THINKING)
+    if (seenNateReplyIds.current === null) {
+      const waitingForHistory = messages.length === 0 && skipEmptyNateBaseline.current
+      if (!waitingForHistory) {
+        seenNateReplyIds.current = new Set(replyIds)
+        nateTypeArmed.current = thinkingVisible
+      }
+    } else {
+      if (thinkingVisible) nateTypeArmed.current = true
+      for (const id of replyIds) {
+        if (seenNateReplyIds.current.has(id)) continue
+        if (nateTypeArmed.current) {
+          revealIds.current.add(id)
+          nateTypeArmed.current = false
+        }
+        seenNateReplyIds.current.add(id)
+      }
+    }
+  }
+
   const visibleMessages = useMemo(() => {
     return messages.filter((message) => {
+      if (message.authorRole === "teacher") return false
       if (!(message.is_ai && message.content === NATE_THINKING)) return true
       return !messages.some(
         (other) =>
@@ -928,6 +1383,19 @@ export default function ChatPanel({
       return a.name.localeCompare(b.name)
     })
   }, [currentUserId, currentUserName, dbUsers, liveUsers, readOnly, tabHidden])
+
+  const mentionPeople = useMemo(() => {
+    const byId = new Map<string, MentionPerson>()
+    for (const person of groupPeople) byId.set(person.id, person)
+    for (const person of online) {
+      if (!byId.has(person.id) && person.name.trim()) {
+        byId.set(person.id, { id: person.id, name: person.name.trim() })
+      }
+    }
+    return [...byId.values()]
+  }, [groupPeople, online])
+
+  const mentionNames = useMemo(() => mentionPeople.map((person) => person.name), [mentionPeople])
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-white">
@@ -996,11 +1464,10 @@ export default function ChatPanel({
           {visibleMessages.map((msg) => {
             const mine = msg.user_id === currentUserId
             const thinking = msg.is_ai && msg.content === NATE_THINKING
-            if (thinking) revealIds.current.add(msg.id)
             const pending = isTempMessageId(msg.id)
             if (msg.is_ai) {
               return thinking ? (
-                <NateThinkingCard key={msg.id} startedAt={msg.created_at} />
+                <NateThinkingCard key={msg.id} />
               ) : (
                 <NateReplyCard
                   key={msg.id}
@@ -1031,7 +1498,7 @@ export default function ChatPanel({
                         <p className="truncate">{msg.original_message.content}</p>
                       </div>
                     )}
-                    <MessageContent content={msg.content} />
+                    <MessageContent content={msg.content} mentionNames={mentionNames} />
                     <div className="mt-2 flex items-center justify-between gap-3">
                       <p className={`text-[11px] font-medium ${mine ? "text-white/70" : "text-slate-400"}`}>
                         {msg.name}
@@ -1057,7 +1524,7 @@ export default function ChatPanel({
         </div>
       </ScrollArea>
 
-      <footer className="border-t border-slate-100 bg-white px-5 py-4">
+      <footer className="relative z-10 border-t border-slate-100 bg-white px-5 py-4">
         {readOnly ? (
           <p className="text-sm text-slate-500">You are viewing this chat. Students write the messages here.</p>
         ) : pendingSession ? (
@@ -1066,6 +1533,7 @@ export default function ChatPanel({
           <ChatInputForm
             currentUserId={currentUserId}
             currentUserName={currentUserName}
+            people={mentionPeople}
             replyingTo={replyingTo}
             onCancelReply={cancelReply}
             newintervene={newintervene}

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache"
 import { getSessionContext } from "@/lib/actions"
+import { inGroup } from "@/lib/session-membership"
 import { createClient } from "@/lib/supabase/server"
 
 export type CollaborativeNote = {
@@ -21,7 +22,8 @@ export type CollaborativeNote = {
 async function requireGroupMember(groupId: string) {
   const session = await getSessionContext()
   if (!session.ok) return { ok: false as const, error: session.error }
-  if (!session.ctx.groupId || session.ctx.groupId !== groupId) {
+  if (session.ctx.role === "teacher") return { ok: true as const, ctx: session.ctx }
+  if (!inGroup(session.ctx, groupId)) {
     return { ok: false as const, error: "Unauthorized" }
   }
   return { ok: true as const, ctx: session.ctx }
@@ -59,6 +61,7 @@ export async function ensureCollaborativeNote(groupId: string) {
 export async function createCollaborativeNote(groupId: string, title: string) {
   const auth = await requireGroupMember(groupId)
   if (!auth.ok) return { ok: false as const, error: auth.error }
+  if (auth.ctx.role === "teacher") return { ok: false as const, error: "Unauthorized" }
 
   const cleaned = title.trim() || "Untitled Documentation"
   const supabase = await createClient()
@@ -87,7 +90,7 @@ export async function updateCollaborativeNote(
 ) {
   const session = await getSessionContext()
   if (!session.ok) return { ok: false as const, error: session.error }
-  if (!session.ctx.groupId) return { ok: false as const, error: "Unauthorized" }
+  if (session.ctx.memberships.length === 0) return { ok: false as const, error: "Unauthorized" }
 
   const supabase = await createClient()
   const existing = await supabase
@@ -97,7 +100,7 @@ export async function updateCollaborativeNote(
     .maybeSingle()
 
   if (existing.error || !existing.data) return { ok: false as const, error: "Document not found" }
-  if (existing.data.group_id !== session.ctx.groupId) return { ok: false as const, error: "Unauthorized" }
+  if (!inGroup(session.ctx, existing.data.group_id)) return { ok: false as const, error: "Unauthorized" }
 
   const { data, error } = await supabase
     .from("ConetCollaborativeNotes")
