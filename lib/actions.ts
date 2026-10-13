@@ -507,7 +507,8 @@ export async function submitFinalDocument(groupId: string, content?: string, par
   if (payload && isStaleWrite(existing.data?.content as string | undefined, payload)) {
     return { error: "This note was reset. Refresh the page and start again." }
   }
-  const locks = await loadSubmittedLocks(supabase, existing.data?.id as string | undefined)
+  let documentId = existing.data?.id as string | undefined
+  const locks = await loadSubmittedLocks(supabase, documentId)
   if (part === "thoughts" && locks.thoughts !== null) return { error: "Initial thoughts are already submitted." }
   if (part === "insights" && locks.thoughts === null) return { error: "Submit your initial thoughts first." }
   if (part === "insights" && locks.insights !== null) return { error: "New insights are already submitted." }
@@ -519,7 +520,6 @@ export async function submitFinalDocument(groupId: string, content?: string, par
   contentToSubmit = withSubmittedPart(contentToSubmit, part)
 
   const createdAt = new Date().toISOString()
-  let documentId = existing.data?.id as string | undefined
   if (!documentId) {
     const created = await supabase
       .from("ConetDocuments")

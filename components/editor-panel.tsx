@@ -83,6 +83,69 @@ function localKey(groupId: string) {
   return `conet-in-class-essay:${groupId}`
 }
 
+type NoteLocks = { thoughts: boolean; insights: boolean }
+
+function locksKey(groupId: string) {
+  return `conet-note-locks:${groupId}`
+}
+
+function readNoteLocks(groupId: string): NoteLocks {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(locksKey(groupId)) || "{}") as Partial<NoteLocks>
+    return { thoughts: Boolean(parsed.thoughts), insights: Boolean(parsed.insights) }
+  } catch {
+    return { thoughts: false, insights: false }
+  }
+}
+
+function writeNoteLocks(groupId: string, locks: NoteLocks) {
+  try {
+    window.localStorage.setItem(locksKey(groupId), JSON.stringify(locks))
+  } catch {
+    // Best-effort; server submissions remain the source of truth after load.
+  }
+}
+
+function locksFromSubmissions(submissions: PastSubmission[]): NoteLocks {
+  return {
+    thoughts: submissions.some((item) => item.part !== "insights"),
+    insights: submissions.some((item) => item.part !== "thoughts"),
+  }
+}
+
+function submissionsForPart(part: NotePart, submissions: PastSubmission[]) {
+  return submissions.filter((item) => (part === "thoughts" ? item.part !== "insights" : item.part !== "thoughts"))
+}
+
+function PartHistoryButton({
+  part,
+  count,
+  onClick,
+}: {
+  part: NotePart
+  count: number
+  onClick: () => void
+}) {
+  const label =
+    part === "thoughts" ? "Previous initial thoughts submissions" : "Previous new insights submissions"
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className="relative inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-neutral-200 bg-white text-neutral-600 transition hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-950"
+    >
+      <History className="h-3.5 w-3.5" />
+      {count > 0 && (
+        <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-neutral-950 px-1 text-[9px] font-semibold leading-none text-white">
+          {count}
+        </span>
+      )}
+    </button>
+  )
+}
+
 function toPayload(next: StructuredContent) {
   return JSON.stringify({
     field1: next.part1_concept1 || "",
@@ -137,17 +200,34 @@ export default function EditorPanel({
   const [submitError, setSubmitError] = useState("")
   const [successPart, setSuccessPart] = useState<NotePart | "both">("both")
   const [successOpen, setSuccessOpen] = useState(false)
-  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyPart, setHistoryPart] = useState<NotePart | null>(null)
   const [submissions, setSubmissions] = useState<PastSubmission[]>([])
   const [submissionsReady, setSubmissionsReady] = useState(false)
+  const [cachedLocks, setCachedLocks] = useState<NoteLocks>(() =>
+    typeof window === "undefined" ? { thoughts: false, insights: false } : readNoteLocks(groupId)
+  )
   const [serverDraft, setServerDraft] = useState<{ concept1: string; concept2: string; savedAt: string } | null>(null)
   const [selectedSubmission, setSelectedSubmission] = useState<PastSubmission | null>(null)
   const thoughtsSubmission = submissions.find((item) => item.part !== "insights")
   const insightsSubmission = submissions.find((item) => item.part !== "thoughts")
-  const thoughtsLocked = Boolean(thoughtsSubmission)
-  const insightsLocked = Boolean(insightsSubmission)
+  const thoughtsLocked =
+    Boolean(thoughtsSubmission) || (!submissionsReady && cachedLocks.thoughts)
+  const insightsLocked =
+    Boolean(insightsSubmission) || (!submissionsReady && cachedLocks.insights)
   const thoughtsEditable = submissionsReady && !thoughtsLocked
-  const insightsEditable = submissionsReady && thoughtsLocked && !insightsLocked
+  const insightsEditable = thoughtsLocked && !insightsLocked
+  const showPart2Block = submissionsReady && !thoughtsLocked && !insightsLocked
+  const showPart2Loading = !submissionsReady && !thoughtsLocked && !insightsLocked
+  const showPart2Editor = insightsLocked || insightsEditable
+  const thoughtsHistoryCount = submissionsForPart("thoughts", submissions).length
+  const insightsHistoryCount = submissionsForPart("insights", submissions).length
+  const historySubmissions = historyPart ? submissionsForPart(historyPart, submissions) : []
+
+  function openPartHistory(part: NotePart) {
+    setSelectedSubmission(null)
+    setHistoryPart(part)
+    void refreshSubmissions()
+  }
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hydrated = useRef(false)
   const sawLock = useRef(false)
@@ -237,7 +317,7 @@ export default function EditorPanel({
     updateField(field, current ? `${current} ${note}` : note)
   }
 
-  async function refreshSubmissions() {
+  async function refreshSubmissions(options?: { silent?: boolean }) {
     const result = await listMyNoteSubmissions(groupId)
     if (!result.error) {
       setSubmissions((current) => {
@@ -245,7 +325,11 @@ export default function EditorPanel({
         const stillPending = pending.filter(
           (item) => !result.submissions.some((row) => row.part === item.part || row.part === "both")
         )
-        return [...stillPending, ...result.submissions]
+        const merged = [...stillPending, ...result.submissions]
+        const locks = locksFromSubmissions(merged)
+        setCachedLocks(locks)
+        writeNoteLocks(groupId, locks)
+        return merged
       })
       setServerDraft(result.draft)
     }
@@ -253,10 +337,12 @@ export default function EditorPanel({
   }
 
   useEffect(() => {
+    setCachedLocks(readNoteLocks(groupId))
+    setSubmissions([])
     setSubmissionsReady(false)
     void refreshSubmissions()
     const timer = window.setInterval(() => {
-      void refreshSubmissions()
+      void refreshSubmissions({ silent: true })
     }, 6000)
     const onFocus = () => {
       void refreshSubmissions()
@@ -288,6 +374,8 @@ export default function EditorPanel({
       }
       const empty: StructuredContent = { part1_concept1: "", part1_concept2: "", savedAt: new Date().toISOString() }
       setStructuredContent(empty)
+      setCachedLocks({ thoughts: false, insights: false })
+      writeNoteLocks(groupId, { thoughts: false, insights: false })
       try {
         window.localStorage.removeItem(localKey(groupId))
       } catch {
@@ -303,7 +391,7 @@ export default function EditorPanel({
     setStructuredContent({ ...prev, part1_concept1, part1_concept2 })
   }, [submissionsReady, thoughtsLocked, insightsLocked, thoughtsSubmission?.concept1, insightsSubmission?.concept2, serverDraft?.savedAt, serverDraft?.concept1, serverDraft?.concept2, groupId])
 
-  async function handleSubmitPart(part: NotePart) {
+  function handleSubmitPart(part: NotePart) {
     if (submittingRef.current) return
     if (part === "thoughts" && !thoughtsEditable) return
     if (part === "insights" && !insightsEditable) return
@@ -320,6 +408,13 @@ export default function EditorPanel({
     const stamped = { ...structuredContent, savedAt: new Date().toISOString() }
     const payload = toPayload(stamped)
     const pendingId = `pending-${part}`
+    const pending: PastSubmission = {
+      id: pendingId,
+      concept1: stamped.part1_concept1,
+      concept2: stamped.part1_concept2,
+      part,
+      createdAt: stamped.savedAt || new Date().toISOString(),
+    }
     try {
       window.localStorage.setItem(localKey(groupId), payload)
     } catch {
@@ -329,41 +424,56 @@ export default function EditorPanel({
     setStructuredContent(stamped)
     setSaveStatus("saved")
     setHasUnsavedChanges(false)
-    setSubmissions((current) => [
-      {
-        id: pendingId,
-        concept1: stamped.part1_concept1,
-        concept2: stamped.part1_concept2,
-        part,
-        createdAt: stamped.savedAt || new Date().toISOString(),
-      },
-      ...current.filter((item) => item.id !== pendingId && item.part !== part),
-    ])
+    setSubmissions((current) => {
+      const merged = [pending, ...current.filter((item) => item.id !== pendingId && item.part !== part)]
+      const locks = locksFromSubmissions(merged)
+      setCachedLocks(locks)
+      writeNoteLocks(groupId, locks)
+      return merged
+    })
     setSuccessPart(part)
     setSuccessOpen(true)
-    try {
-      const result = await submitFinalDocument(groupId, payload, part)
-      if ("error" in result) {
-        if (/already submitted/i.test(result.error || "")) {
-          void refreshSubmissions()
+
+    void (async () => {
+      try {
+        const result = await submitFinalDocument(groupId, payload, part)
+        if ("error" in result) {
+          if (/already submitted/i.test(result.error || "")) {
+            void refreshSubmissions({ silent: true })
+            return
+          }
+          setSubmissions((current) => {
+            const merged = current.filter((item) => item.id !== pendingId)
+            const locks = locksFromSubmissions(merged)
+            setCachedLocks(locks)
+            writeNoteLocks(groupId, locks)
+            return merged
+          })
+          setSuccessOpen(false)
+          setSubmitError(result.error || "Failed to submit, please try again.")
           return
         }
-        setSubmissions((current) => current.filter((item) => item.id !== pendingId))
+        setSubmissions((current) => {
+          const merged = [result.submission, ...current.filter((item) => item.id !== pendingId && item.id !== result.submission.id)]
+          const locks = locksFromSubmissions(merged)
+          setCachedLocks(locks)
+          writeNoteLocks(groupId, locks)
+          return merged
+        })
+      } catch {
+        setSubmissions((current) => {
+          const merged = current.filter((item) => item.id !== pendingId)
+          const locks = locksFromSubmissions(merged)
+          setCachedLocks(locks)
+          writeNoteLocks(groupId, locks)
+          return merged
+        })
         setSuccessOpen(false)
-        setSubmitError(result.error || "Failed to submit, please try again.")
-        return
+        setSubmitError("Failed to submit, please try again.")
+      } finally {
+        submittingRef.current = null
       }
-      setSubmissions((current) => [
-        result.submission,
-        ...current.filter((item) => item.id !== pendingId && item.id !== result.submission.id),
-      ])
-    } catch {
-      setSubmissions((current) => current.filter((item) => item.id !== pendingId))
-      setSuccessOpen(false)
-      setSubmitError("Failed to submit, please try again.")
-    } finally {
-      submittingRef.current = null
-    }
+    })()
   }
 
   const statusLabel =
@@ -378,24 +488,6 @@ export default function EditorPanel({
           <p className="truncate text-xs text-neutral-500">Submit initial thoughts first. Each part locks after you submit it.</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          <button
-            type="button"
-            aria-label="Previous submissions"
-            title="Previous submissions"
-            onClick={() => {
-              setSelectedSubmission(null)
-              setHistoryOpen(true)
-              void refreshSubmissions()
-            }}
-            className="relative inline-flex h-8 w-8 items-center justify-center rounded-lg border border-neutral-200 bg-white text-neutral-600 transition hover:border-neutral-300 hover:bg-neutral-50 hover:text-neutral-950"
-          >
-            <History className="h-3.5 w-3.5" />
-            {submissions.length > 0 && (
-              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-neutral-950 px-1 text-[9px] font-semibold leading-none text-white">
-                {submissions.length}
-              </span>
-            )}
-          </button>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 px-2.5 py-1 text-[11px] font-semibold text-neutral-700">
             <span
               className={`h-1.5 w-1.5 rounded-full ${
@@ -420,6 +512,7 @@ export default function EditorPanel({
                 {thoughtsLocked ? "Submitted. This part can no longer be changed." : "Write this first, then submit it once."}
               </p>
             </div>
+            <PartHistoryButton part="thoughts" count={thoughtsHistoryCount} onClick={() => openPartHistory("thoughts")} />
             <span className="shrink-0 text-[11px] font-semibold tabular-nums text-neutral-500">
               {wordCount(structuredContent.part1_concept1)} words
             </span>
@@ -461,10 +554,15 @@ export default function EditorPanel({
                   ? "Submitted. This part can no longer be changed."
                   : insightsEditable
                     ? "What did the discussion change? Mark where ideas came from."
-                    : "Opens after you submit your initial thoughts."}
+                    : showPart2Loading
+                      ? "Loading your note…"
+                      : "Opens after you submit your initial thoughts."}
               </p>
             </div>
-            {(insightsEditable || insightsLocked) && (
+            {(showPart2Editor || showPart2Loading) && (
+              <PartHistoryButton part="insights" count={insightsHistoryCount} onClick={() => openPartHistory("insights")} />
+            )}
+            {showPart2Editor && (
               <span className="shrink-0 text-[11px] font-semibold tabular-nums text-neutral-500">
                 {wordCount(structuredContent.part1_concept2)} words
               </span>
@@ -491,7 +589,7 @@ export default function EditorPanel({
               />
             </div>
           )}
-          {insightsEditable || insightsLocked ? (
+          {showPart2Editor ? (
             <Textarea
               value={structuredContent.part1_concept2}
               onChange={(event) => updateField("part1_concept2", event.target.value)}
@@ -501,7 +599,11 @@ export default function EditorPanel({
                 insightsEditable ? "bg-neutral-50" : "bg-neutral-50 text-neutral-700"
               }`}
             />
-          ) : (
+          ) : showPart2Loading ? (
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center bg-neutral-50 px-4 py-6 text-center">
+              <p className="text-sm font-medium text-neutral-500">Loading your note…</p>
+            </div>
+          ) : showPart2Block ? (
             <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 overflow-hidden bg-white px-4 py-3 text-center">
               <div className="relative h-[min(220px,58%)] min-h-[140px] w-full max-w-[320px] flex-1">
                 <Image
@@ -516,7 +618,7 @@ export default function EditorPanel({
                 Write and submit your initial thoughts first. This part opens after that submission.
               </p>
             </div>
-          )}
+          ) : null}
         </article>
       </div>
 
@@ -557,59 +659,56 @@ export default function EditorPanel({
       </Dialog>
 
       <Dialog
-        open={historyOpen}
+        open={historyPart !== null}
         onOpenChange={(open) => {
-          setHistoryOpen(open)
-          if (!open) setSelectedSubmission(null)
+          if (!open) {
+            setHistoryPart(null)
+            setSelectedSubmission(null)
+          }
         }}
       >
         <DialogContent className="max-h-[min(36rem,calc(100dvh-2.5rem))] max-w-lg gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">
           <div className="border-b border-slate-100 px-5 pb-4 pt-5 pr-12">
             <DialogHeader className="space-y-1 text-left">
               <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">
-                {selectedSubmission ? "Previous submission" : "Previous submissions"}
+                {selectedSubmission
+                  ? "Previous submission"
+                  : historyPart
+                    ? partTitle(historyPart)
+                    : "Previous submissions"}
               </DialogTitle>
               <DialogDescription className="text-sm leading-6 text-slate-500">
                 {selectedSubmission
-                  ? `${partTitle(selectedSubmission.part)} · ${submittedAt(selectedSubmission.createdAt)}`
-                  : "Each part is kept on its own. Opening one does not change what you are writing now."}
+                  ? submittedAt(selectedSubmission.createdAt)
+                  : "Each submit is kept for this part only. Opening one does not change what you are writing now."}
               </DialogDescription>
             </DialogHeader>
           </div>
           <div className="max-h-[min(24rem,calc(100dvh-12rem))] overflow-y-auto px-5 py-4">
-            {selectedSubmission ? (
-              <div className="space-y-4">
-                {selectedSubmission.part !== "insights" && (
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Initial thoughts</p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
-                      {selectedSubmission.concept1 || "Nothing written."}
-                    </p>
-                  </div>
-                )}
-                {selectedSubmission.part !== "thoughts" && (
-                  <div>
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                      Individual Reflection: New insights and supplementary points
-                    </p>
-                    <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
-                      {selectedSubmission.concept2 || "Nothing written."}
-                    </p>
-                  </div>
-                )}
+            {selectedSubmission && historyPart ? (
+              <div>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                  {partTitle(historyPart)}
+                </p>
+                <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                  {(historyPart === "thoughts" ? selectedSubmission.concept1 : selectedSubmission.concept2) ||
+                    "Nothing written."}
+                </p>
               </div>
-            ) : submissions.length === 0 ? (
-              <p className="text-sm text-slate-500">You have not submitted this note yet.</p>
+            ) : historySubmissions.length === 0 ? (
+              <p className="text-sm text-slate-500">You have not submitted this part yet.</p>
             ) : (
               <ul className="space-y-2">
-                {submissions.map((item, index) => (
+                {historySubmissions.map((item, index) => (
                   <li key={item.id}>
                     <button
                       type="button"
                       onClick={() => setSelectedSubmission(item)}
                       className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition hover:border-slate-300 hover:bg-white"
                     >
-                      <span className="text-sm font-semibold text-slate-900">{partTitle(item.part)}</span>
+                      <span className="text-sm font-semibold text-slate-900">
+                        Submission {historySubmissions.length - index}
+                      </span>
                       <span className="text-xs font-medium text-slate-500">{submittedAt(item.createdAt)}</span>
                     </button>
                   </li>
