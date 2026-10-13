@@ -85,7 +85,7 @@ export async function requestNateReply(
     messages,
     temperature: 0.7,
   }
-  if (mode === 1) body.max_tokens = 200
+  if (mode === 1) body.max_tokens = 400
 
   try {
     const response = await fetch("https://zenmux.ai/api/v1/chat/completions", {
