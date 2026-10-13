@@ -1,6 +1,6 @@
 "use server"
 
-import { getSessionContext, getSessionMessages } from "@/lib/actions"
+import { ensureAgentOpeningMessage, getSessionContext, getSessionMessages } from "@/lib/actions"
 import { inGroup } from "@/lib/session-membership"
 import { canonicalSession } from "@/lib/canonical-session"
 import { getTeacherBoard } from "@/lib/classroom"
@@ -32,9 +32,8 @@ export async function loadTeacherSession(
   if (auth.ctx.role !== "teacher") return { ok: false, error: "Only a teacher can open that session." }
 
   const supabase = await createClient()
-  const [board, prefetchedMessages, prefetchedNotes, individualNotes, groupLink] = await Promise.all([
+  const [board, prefetchedNotes, individualNotes, groupLink] = await Promise.all([
     getTeacherBoard(),
-    chatSessionId ? getSessionMessages(chatSessionId) : Promise.resolve(null),
     groupId ? listCollaborativeNotes(groupId) : Promise.resolve(null),
     groupId ? listGroupIndividualNotes(groupId) : Promise.resolve(null),
     groupId
@@ -52,8 +51,10 @@ export async function loadTeacherSession(
 
   const chat =
     (chatSessionId && group.sessions.find((item) => item.id === chatSessionId)) || canonicalSession(group.sessions)
+  if (chat) await ensureAgentOpeningMessage(group.id, chat.id)
+
   const [initialMessages, notesResult, noteReadout] = await Promise.all([
-    prefetchedMessages ?? (chat ? getSessionMessages(chat.id) : Promise.resolve([])),
+    chat ? getSessionMessages(chat.id) : Promise.resolve([]),
     prefetchedNotes ?? listCollaborativeNotes(group.id),
     individualNotes ?? listGroupIndividualNotes(group.id),
   ])

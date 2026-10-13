@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react"
 import Image from "next/image"
 import { History } from "lucide-react"
 import blockFigure from "@/components/figure/block.png"
+import submitFigure from "@/components/figure/submit.png"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -52,16 +53,30 @@ type PastSubmission = {
 
 function partTitle(part: NotePart | "both") {
   if (part === "thoughts") return "Initial thoughts"
-  if (part === "insights") return "New insights and supplementary points"
+  if (part === "insights") return "Individual Reflection: New insights and supplementary points"
   return "Both parts"
 }
 
-function submittedSentence(part: NotePart | "both") {
+function successCopy(part: NotePart | "both") {
   if (part === "thoughts") {
-    return "Your initial thoughts were submitted and can no longer be changed. After the discussion, write your new insights below."
+    return {
+      partLabel: "Part 1",
+      title: "Initial thoughts",
+      body: "This part is locked. After the discussion, write your new insights below.",
+    }
   }
-  if (part === "insights") return "Your new insights were submitted and can no longer be changed."
-  return "Your note was submitted and can no longer be changed."
+  if (part === "insights") {
+    return {
+      partLabel: "Part 2",
+      title: "New insights and supplementary points",
+      body: "This part is locked and can no longer be changed.",
+    }
+  }
+  return {
+    partLabel: "Note",
+    title: "Both parts",
+    body: "This note is locked and can no longer be changed.",
+  }
 }
 
 function localKey(groupId: string) {
@@ -119,7 +134,6 @@ export default function EditorPanel({
   })
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
-  const [submittingPart, setSubmittingPart] = useState<NotePart | null>(null)
   const [submitError, setSubmitError] = useState("")
   const [successPart, setSuccessPart] = useState<NotePart | "both">("both")
   const [successOpen, setSuccessOpen] = useState(false)
@@ -137,6 +151,7 @@ export default function EditorPanel({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hydrated = useRef(false)
   const sawLock = useRef(false)
+  const submittingRef = useRef<NotePart | null>(null)
   const latestRef = useRef(structuredContent)
   latestRef.current = structuredContent
 
@@ -225,7 +240,13 @@ export default function EditorPanel({
   async function refreshSubmissions() {
     const result = await listMyNoteSubmissions(groupId)
     if (!result.error) {
-      setSubmissions(result.submissions)
+      setSubmissions((current) => {
+        const pending = current.filter((item) => item.id.startsWith("pending-"))
+        const stillPending = pending.filter(
+          (item) => !result.submissions.some((row) => row.part === item.part || row.part === "both")
+        )
+        return [...stillPending, ...result.submissions]
+      })
       setServerDraft(result.draft)
     }
     setSubmissionsReady(true)
@@ -283,6 +304,7 @@ export default function EditorPanel({
   }, [submissionsReady, thoughtsLocked, insightsLocked, thoughtsSubmission?.concept1, insightsSubmission?.concept2, serverDraft?.savedAt, serverDraft?.concept1, serverDraft?.concept2, groupId])
 
   async function handleSubmitPart(part: NotePart) {
+    if (submittingRef.current) return
     if (part === "thoughts" && !thoughtsEditable) return
     if (part === "insights" && !insightsEditable) return
     const text = part === "thoughts" ? structuredContent.part1_concept1 : structuredContent.part1_concept2
@@ -290,35 +312,63 @@ export default function EditorPanel({
       setSubmitError(part === "thoughts" ? "Write your initial thoughts before submitting." : "Write your new insights before submitting.")
       return
     }
-    setSubmittingPart(part)
-    setSubmitError("")
+    submittingRef.current = part
     if (timerRef.current) {
       clearTimeout(timerRef.current)
       timerRef.current = null
     }
     const stamped = { ...structuredContent, savedAt: new Date().toISOString() }
     const payload = toPayload(stamped)
+    const pendingId = `pending-${part}`
     try {
       window.localStorage.setItem(localKey(groupId), payload)
     } catch {
       // The server copy is the one that is submitted.
     }
-    const result = await submitFinalDocument(groupId, payload, part)
-    setSubmittingPart(null)
-    if ("error" in result) {
-      setSubmitError(result.error || "Failed to submit, please try again.")
-      return
-    }
+    setSubmitError("")
     setStructuredContent(stamped)
     setSaveStatus("saved")
     setHasUnsavedChanges(false)
-    setSubmissions((current) => [result.submission, ...current.filter((item) => item.id !== result.submission.id)])
+    setSubmissions((current) => [
+      {
+        id: pendingId,
+        concept1: stamped.part1_concept1,
+        concept2: stamped.part1_concept2,
+        part,
+        createdAt: stamped.savedAt || new Date().toISOString(),
+      },
+      ...current.filter((item) => item.id !== pendingId && item.part !== part),
+    ])
     setSuccessPart(part)
     setSuccessOpen(true)
+    try {
+      const result = await submitFinalDocument(groupId, payload, part)
+      if ("error" in result) {
+        if (/already submitted/i.test(result.error || "")) {
+          void refreshSubmissions()
+          return
+        }
+        setSubmissions((current) => current.filter((item) => item.id !== pendingId))
+        setSuccessOpen(false)
+        setSubmitError(result.error || "Failed to submit, please try again.")
+        return
+      }
+      setSubmissions((current) => [
+        result.submission,
+        ...current.filter((item) => item.id !== pendingId && item.id !== result.submission.id),
+      ])
+    } catch {
+      setSubmissions((current) => current.filter((item) => item.id !== pendingId))
+      setSuccessOpen(false)
+      setSubmitError("Failed to submit, please try again.")
+    } finally {
+      submittingRef.current = null
+    }
   }
 
   const statusLabel =
     saveStatus === "error" ? "Save failed" : hasUnsavedChanges || saveStatus === "saving" ? "Saving" : "Saved"
+  const success = successCopy(successPart)
 
   return (
     <section className="flex h-full min-h-0 flex-col overflow-hidden bg-white text-neutral-950">
@@ -381,10 +431,10 @@ export default function EditorPanel({
               <Button
                 type="button"
                 onClick={() => void handleSubmitPart("thoughts")}
-                disabled={!thoughtsEditable || submittingPart !== null}
+                disabled={!thoughtsEditable}
                 className="h-7 shrink-0 rounded-lg bg-neutral-950 px-2.5 text-[11px] font-semibold text-white hover:bg-neutral-800"
               >
-                {submittingPart === "thoughts" ? "Submitting..." : "Submit"}
+                Submit
               </Button>
             )}
           </div>
@@ -405,7 +455,7 @@ export default function EditorPanel({
               2
             </span>
             <div className="min-w-0 flex-1">
-              <h3 className="truncate text-sm font-bold">New insights and supplementary points</h3>
+              <h3 className="truncate text-sm font-bold">Individual Reflection: New insights and supplementary points</h3>
               <p className="truncate text-[11px] text-neutral-500">
                 {insightsLocked
                   ? "Submitted. This part can no longer be changed."
@@ -427,10 +477,9 @@ export default function EditorPanel({
               <Button
                 type="button"
                 onClick={() => void handleSubmitPart("insights")}
-                disabled={submittingPart !== null}
                 className="h-7 shrink-0 rounded-lg bg-neutral-950 px-2.5 text-[11px] font-semibold text-white hover:bg-neutral-800"
               >
-                {submittingPart === "insights" ? "Submitting..." : "Submit"}
+                Submit
               </Button>
             ) : null}
           </div>
@@ -472,20 +521,34 @@ export default function EditorPanel({
       </div>
 
       <Dialog open={successOpen} onOpenChange={setSuccessOpen}>
-        <DialogContent className="max-w-sm gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">
-          <div className="border-b border-slate-100 px-5 pb-4 pt-5 pr-12">
-            <DialogHeader className="space-y-1 text-left">
-              <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">Submitted successfully</DialogTitle>
-              <DialogDescription className="text-sm leading-6 text-slate-500">
-                {submittedSentence(successPart)}
+        <DialogContent className="max-w-[24rem] gap-0 overflow-hidden rounded-[28px] border-slate-200 p-0 shadow-xl">
+          <div className="border-b border-slate-100 bg-slate-50 px-6 pb-1 pt-8">
+            <div className="relative mx-auto h-52 w-full max-w-[280px]">
+              <Image
+                src={submitFigure}
+                alt="Submitted successfully"
+                fill
+                sizes="280px"
+                className="object-contain object-center"
+              />
+            </div>
+          </div>
+          <div className="px-6 pb-6 pt-4">
+            <DialogHeader className="items-center space-y-1.5 text-center sm:text-center">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                {success.partLabel}
+              </p>
+              <DialogTitle className="text-base font-bold tracking-tight text-slate-900">
+                {success.title}
+              </DialogTitle>
+              <DialogDescription className="max-w-xs text-sm leading-6 text-slate-500">
+                {success.body}
               </DialogDescription>
             </DialogHeader>
-          </div>
-          <div className="flex justify-end px-5 py-4">
             <button
               type="button"
               onClick={() => setSuccessOpen(false)}
-              className="h-9 rounded-xl bg-slate-900 px-3.5 text-sm font-semibold text-white hover:bg-slate-800"
+              className="mt-4 h-10 w-full rounded-xl bg-slate-900 text-sm font-semibold text-white hover:bg-slate-800"
             >
               OK
             </button>
@@ -527,7 +590,7 @@ export default function EditorPanel({
                 {selectedSubmission.part !== "thoughts" && (
                   <div>
                     <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                      New insights and supplementary points
+                      Individual Reflection: New insights and supplementary points
                     </p>
                     <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
                       {selectedSubmission.concept2 || "Nothing written."}

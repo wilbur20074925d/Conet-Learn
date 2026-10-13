@@ -16,7 +16,7 @@ export async function signIn(email: string, password: string) {
     return {
       error: message.includes("confirm")
         ? "This email still needs to be confirmed before it can sign in."
-        : "Wrong username or password. Please try again.",
+        : "Wrong email or password. Please try again.",
     }
   }
 

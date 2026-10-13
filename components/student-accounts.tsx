@@ -4,7 +4,6 @@ import { FormEvent, useState } from "react"
 import { useRouter } from "next/navigation"
 import { createStudentAccount, deleteStudentAccounts, resetStudentPassword } from "@/lib/account-actions"
 import type { BoardGroup, ClassroomStudent } from "@/lib/classroom"
-import { usernameFromName } from "@/lib/login-identity"
 import { INITIAL_STUDENT_PASSWORD } from "@/lib/student-password"
 
 function groupLabel(groups: BoardGroup[], studentId: string) {
@@ -24,6 +23,9 @@ export default function StudentAccounts({
 }) {
   const router = useRouter()
   const [name, setName] = useState("")
+  const [username, setUsername] = useState("")
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
   const [studentId, setStudentId] = useState("")
   const [pending, setPending] = useState(false)
   const [resettingId, setResettingId] = useState<string | null>(null)
@@ -38,20 +40,27 @@ export default function StudentAccounts({
     setPending(true)
     setError("")
     setNotice("")
-    const createdName = name.trim()
-    const createdId = studentId.trim()
-    const result = await createStudentAccount(createdName, createdId)
+    const result = await createStudentAccount({
+      name: name.trim(),
+      username: username.trim(),
+      email: email.trim(),
+      password,
+      studentId: studentId.trim() || null,
+    })
     setPending(false)
     if (!result.ok) {
       setError(result.error)
       return
     }
     setName("")
+    setUsername("")
+    setEmail("")
+    setPassword("")
     setStudentId("")
     setNotice(
       result.pendingConfirm
-        ? `${usernameFromName(createdName)} was created. Password: ${createdId}. They need to confirm email before signing in.`
-        : `${result.username} can sign in with password ${createdId}.`
+        ? `${email.trim()} was created. They must confirm email before signing in.`
+        : `${result.email} can sign in with the password you set.`
     )
     router.refresh()
   }
@@ -82,10 +91,9 @@ export default function StudentAccounts({
     router.refresh()
   }
 
-  async function onReset(studentUserId: string, studentName: string, storedId: string | null) {
+  async function onReset(studentUserId: string, studentName: string) {
     if (pending || resettingId || deleting) return
-    const next = storedId || INITIAL_STUDENT_PASSWORD
-    if (!window.confirm(`Reset ${studentName}'s password to ${next}?`)) return
+    if (!window.confirm(`Reset ${studentName}'s password to ${INITIAL_STUDENT_PASSWORD}?`)) return
     setResettingId(studentUserId)
     setError("")
     setNotice("")
@@ -95,9 +103,12 @@ export default function StudentAccounts({
       setError(result.error)
       return
     }
-    setNotice(`${studentName}'s password is ${storedId || result.fallbackPassword} again.`)
+    setNotice(`${studentName}'s password is ${result.fallbackPassword} again.`)
     router.refresh()
   }
+
+  const canCreate =
+    name.trim() && username.trim() && email.trim() && password.length >= 8
 
   return (
     <aside className="flex h-full min-h-0 flex-col bg-white">
@@ -105,28 +116,54 @@ export default function StudentAccounts({
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Teacher</p>
         <h1 className="mt-1 text-xl font-bold tracking-tight text-slate-900">Students</h1>
         <p className="mt-1 text-xs leading-relaxed text-slate-500">
-          Username is the name without spaces (uppercase). Password is the student ID.
+          Students sign in with email and password. Username is for your records in this panel.
         </p>
         <form onSubmit={onCreate} className="mt-3 space-y-2">
           <input
             value={name}
             onChange={(event) => setName(event.target.value)}
-            placeholder="Student name"
+            placeholder="Display name"
             autoComplete="off"
             maxLength={80}
             className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/10"
           />
+          <div className="grid grid-cols-2 gap-2">
+            <input
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              placeholder="Username"
+              autoComplete="off"
+              maxLength={64}
+              className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/10"
+            />
+            <input
+              value={studentId}
+              onChange={(event) => setStudentId(event.target.value)}
+              placeholder="Student ID (optional)"
+              autoComplete="off"
+              maxLength={64}
+              className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/10"
+            />
+          </div>
           <input
-            value={studentId}
-            onChange={(event) => setStudentId(event.target.value)}
-            placeholder="Student ID"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="Email"
+            type="email"
             autoComplete="off"
-            maxLength={64}
+            className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/10"
+          />
+          <input
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            placeholder="Password (min. 8 characters)"
+            type="password"
+            autoComplete="new-password"
             className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/10"
           />
           <button
             type="submit"
-            disabled={pending || !name.trim() || !studentId.trim()}
+            disabled={pending || !canCreate}
             className="h-10 w-full rounded-xl bg-slate-900 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50"
           >
             {pending ? "Creating..." : "Create account"}
@@ -188,29 +225,29 @@ export default function StudentAccounts({
                 aria-label={`Select ${student.name}`}
               />
               <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-slate-900">{student.name}</p>
-            <p className="mt-0.5 truncate text-xs text-slate-500" title={student.email || undefined}>
-              {student.email ? usernameFromName(student.name) : "No login saved"}
-            </p>
-            <p className="mt-1 text-[11px] text-slate-400">{groupLabel(groups, student.id)}</p>
-            <div className="mt-2.5 flex gap-2">
-              <button
-                type="button"
-                disabled={pending || resettingId !== null || deleting}
-                onClick={() => onReset(student.id, student.name, student.studentId ?? null)}
-                className="h-8 flex-1 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
-              >
-                {resettingId === student.id ? "Resetting..." : "Reset password"}
-              </button>
-              <button
-                type="button"
-                disabled={pending || resettingId !== null || deleting}
-                onClick={() => void onDeleteMany([student.id], `${student.name}'s account`)}
-                className="h-8 rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-40"
-              >
-                Delete
-              </button>
-            </div>
+                <p className="text-sm font-semibold text-slate-900">{student.name}</p>
+                <p className="mt-0.5 truncate text-xs text-slate-500" title={student.email || undefined}>
+                  {student.email || "No email saved"}
+                </p>
+                <p className="mt-1 text-[11px] text-slate-400">{groupLabel(groups, student.id)}</p>
+                <div className="mt-2.5 flex gap-2">
+                  <button
+                    type="button"
+                    disabled={pending || resettingId !== null || deleting}
+                    onClick={() => onReset(student.id, student.name)}
+                    className="h-8 flex-1 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    {resettingId === student.id ? "Resetting..." : "Reset password"}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={pending || resettingId !== null || deleting}
+                    onClick={() => void onDeleteMany([student.id], `${student.name}'s account`)}
+                    className="h-8 rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-40"
+                  >
+                    Delete
+                  </button>
+                </div>
               </div>
             </div>
           </section>

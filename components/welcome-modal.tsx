@@ -158,6 +158,30 @@ export default function WelcomeModal({ userId, onConsentGiven }: WelcomeModalPro
                   </li>
                 </ul>
               </div>
+
+              <div className="text-sm leading-relaxed text-slate-500">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Contact</p>
+                <ul className="mt-2 space-y-1 text-sm text-slate-600">
+                  <li>
+                    Professor Shihui Feng{" "}
+                    <a
+                      href="mailto:shihuife@hku.hk"
+                      className="font-medium text-sky-700 underline decoration-sky-200 underline-offset-2 hover:text-sky-800"
+                    >
+                      shihuife@hku.hk
+                    </a>
+                  </li>
+                  <li>
+                    Mr. Yuebo Yang{" "}
+                    <a
+                      href="mailto:yangyuebo@connect.hku.hk"
+                      className="font-medium text-sky-700 underline decoration-sky-200 underline-offset-2 hover:text-sky-800"
+                    >
+                      yangyuebo@connect.hku.hk
+                    </a>
+                  </li>
+                </ul>
+              </div>
             </div>
 
             <div className="shrink-0 border-t border-slate-100 bg-white px-6 py-4 sm:px-8 sm:py-5">

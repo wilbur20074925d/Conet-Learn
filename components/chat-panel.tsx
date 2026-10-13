@@ -5,9 +5,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { EmojiPicker } from "@/components/ui/emoji-picker"
-import { finishNateReply, type Message } from "@/lib/actions"
+import { ensureAgentOpeningMessage, finishNateReply, type Message } from "@/lib/actions"
 import { mapMessageRows, type RawMessage } from "@/lib/map-messages"
-import { NATE_MENTION_TEXT, NATE_THINKING, NATE_USER_ID, stripFigures } from "@/lib/nate"
+import { AGENT_DISPLAY_NAME, NATE_MENTION_TEXT, NATE_THINKING, NATE_USER_ID, stripFigures } from "@/lib/nate"
 import {
   AWAY_WINDOW_MS,
   fetchSessionMessages,
@@ -25,8 +25,20 @@ import {
 } from "@/lib/seminar-sync"
 import { isTempSessionId } from "@/lib/session-browser"
 import { createClient } from "@/lib/supabase/browser"
+import { ChatStickerBubble } from "@/components/chat-sticker-bubble"
+import { ChatStickerPicker } from "@/components/chat-sticker-picker"
+import { RemyAvatar } from "@/components/remy-avatar"
+import { StudentFigureAvatar } from "@/components/student-figure-avatar"
+import {
+  formatStickerMessage,
+  isStickerAlt,
+  resolveChatSticker,
+  stickerLabelFromAlt,
+  type ChatSticker,
+} from "@/lib/chat-stickers"
+import { buildStudentFigureIndexMap } from "@/lib/student-figure-avatars"
 import { connectChatRoom, publishChatMessage, renameChatMessage } from "@/lib/yjs/yjsChatChannel"
-import { BookOpen, Check, Copy, ImagePlus, Reply, SendHorizonal, X } from "lucide-react"
+import { Check, Copy, ImagePlus, Reply, SendHorizonal, X } from "lucide-react"
 
 type MentionPerson = {
   id: string
@@ -73,6 +85,7 @@ const ChatInputForm = memo(function ChatInputForm({
   currentUserId,
   currentUserName,
   people,
+  studentFigureIndexFor,
   replyingTo,
   onCancelReply,
   newintervene,
@@ -82,6 +95,7 @@ const ChatInputForm = memo(function ChatInputForm({
   currentUserId: string
   currentUserName: string
   people: MentionPerson[]
+  studentFigureIndexFor: (userId: string) => number
   replyingTo: Message | null
   onCancelReply: () => void
   newintervene: number
@@ -105,7 +119,7 @@ const ChatInputForm = memo(function ChatInputForm({
 
   const roster = useMemo(() => {
     const byId = new Map<string, MentionPerson & { nate?: boolean }>()
-    byId.set(NATE_USER_ID, { id: NATE_USER_ID, name: "NATE", nate: true })
+    byId.set(NATE_USER_ID, { id: NATE_USER_ID, name: AGENT_DISPLAY_NAME, nate: true })
     for (const person of people) {
       if (person.id === NATE_USER_ID) continue
       const name = person.name.trim()
@@ -189,44 +203,58 @@ const ChatInputForm = memo(function ChatInputForm({
     }
   }
 
+  const dispatchMessage = useCallback(
+    (content: string) => {
+      const clientId = crypto.randomUUID()
+      const reply = replyingTo
+      const optimistic: Message = {
+        id: `temp-${clientId}`,
+        content,
+        created_at: new Date().toISOString(),
+        user_id: currentUserId,
+        name: currentUserName,
+        avatar_url: null,
+        is_ai: false,
+        reply_to: reply?.id ?? null,
+        is_reply: Boolean(reply),
+        original_message: reply
+          ? { id: reply.id, content: reply.content, user_name: reply.name }
+          : null,
+      }
+
+      setInputValue("")
+      setFigure(null)
+      setFigureError("")
+      setMention(null)
+      onCancelReply()
+      onOptimisticSend(optimistic)
+      onQueueSend({
+        clientId,
+        message: optimistic,
+        replyTargetsNate: Boolean(reply?.is_ai),
+        nateMode: newintervene,
+      })
+      queueMicrotask(() => inputRef.current?.focus())
+    },
+    [currentUserId, currentUserName, newintervene, onCancelReply, onOptimisticSend, onQueueSend, replyingTo]
+  )
+
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     const typed = inputValue.trim()
     if (figureBusy || (!typed && !figure)) return
     const caption = typed || "Shared a figure."
     const content = figure ? `${caption}\n\n![figure](${figure.url})` : caption
-
-    const clientId = crypto.randomUUID()
-    const reply = replyingTo
-    const optimistic: Message = {
-      id: `temp-${clientId}`,
-      content,
-      created_at: new Date().toISOString(),
-      user_id: currentUserId,
-      name: currentUserName,
-      avatar_url: null,
-      is_ai: false,
-      reply_to: reply?.id ?? null,
-      is_reply: Boolean(reply),
-      original_message: reply
-        ? { id: reply.id, content: reply.content, user_name: reply.name }
-        : null,
-    }
-
-    setInputValue("")
-    setFigure(null)
-    setFigureError("")
-    setMention(null)
-    onCancelReply()
-    onOptimisticSend(optimistic)
-    onQueueSend({
-      clientId,
-      message: optimistic,
-      replyTargetsNate: Boolean(reply?.is_ai),
-      nateMode: newintervene,
-    })
-    queueMicrotask(() => inputRef.current?.focus())
+    dispatchMessage(content)
   }
+
+  const sendSticker = useCallback(
+    (sticker: ChatSticker) => {
+      if (figureBusy) return
+      dispatchMessage(formatStickerMessage(sticker))
+    },
+    [dispatchMessage, figureBusy]
+  )
 
   return (
     <div>
@@ -248,7 +276,7 @@ const ChatInputForm = memo(function ChatInputForm({
           <img src={figure.url} alt="" className="h-14 w-14 rounded-lg bg-white object-cover" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium text-slate-800">{figure.name}</p>
-            <p className="text-xs text-slate-500">Mention @NATE to ask Nate to read this figure.</p>
+            <p className="text-xs text-slate-500">Mention @{AGENT_DISPLAY_NAME} to ask {AGENT_DISPLAY_NAME} to read this figure.</p>
           </div>
           <button
             type="button"
@@ -311,16 +339,18 @@ const ChatInputForm = memo(function ChatInputForm({
                       }`}
                     >
                       {person.nate ? (
-                        <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[10px] font-bold text-white">
-                          N
-                        </span>
+                        <RemyAvatar className="h-6 w-6" title={AGENT_DISPLAY_NAME} />
                       ) : (
-                        <SeminarIcon className="h-6 w-6" iconClassName="h-3 w-3" />
+                        <StudentFigureAvatar
+                          figureIndex={studentFigureIndexFor(person.id)}
+                          className="h-6 w-6"
+                          title={person.name}
+                        />
                       )}
                       <span className="min-w-0 truncate font-semibold text-slate-800">
                         {person.nate ? (
                           <>
-                            NATE
+                            {AGENT_DISPLAY_NAME}
                             <span className="ml-1 font-medium text-slate-500">(AI Chatbot)</span>
                           </>
                         ) : (
@@ -382,15 +412,16 @@ const ChatInputForm = memo(function ChatInputForm({
             onBlur={() => setMention(null)}
             placeholder={
               figure
-                ? "Ask @NATE to read this figure..."
+                ? `Ask @${AGENT_DISPLAY_NAME} to read this figure...`
                 : replyingTo
                   ? `Reply to ${replyingTo.name}...`
                   : "Write to your group, or type @ to mention someone"
             }
             autoComplete="off"
-            className="h-11 rounded-xl border-slate-200 bg-white pr-12 shadow-none focus-visible:ring-slate-900/20"
+            className="h-11 rounded-xl border-slate-200 bg-white pr-[4.75rem] shadow-none focus-visible:ring-slate-900/20"
           />
-          <div className="absolute right-3 top-1/2 -translate-y-1/2">
+          <div className="absolute right-2 top-1/2 flex -translate-y-1/2 items-center gap-0.5">
+            <ChatStickerPicker onStickerSelect={sendSticker} disabled={figureBusy} />
             <EmojiPicker
               onEmojiSelect={(emoji) => {
                 const cursor = inputRef.current?.selectionStart || inputValue.length
@@ -460,7 +491,13 @@ function escapeHtml(value: string) {
 
 function highlightMentions(text: string, names: string[]) {
   const needles = [
-    ...new Set(["NATE (AI Chatbot)", "NATE", ...names.map((name) => name.trim()).filter(Boolean)]),
+    ...new Set([
+      `${AGENT_DISPLAY_NAME} (AI Chatbot)`,
+      AGENT_DISPLAY_NAME,
+      "NATE (AI Chatbot)",
+      "NATE",
+      ...names.map((name) => name.trim()).filter(Boolean),
+    ]),
   ]
     .map((name) => `@${escapeHtml(name)}`)
     .sort((a, b) => b.length - a.length)
@@ -665,7 +702,7 @@ function splitCodeFences(raw: string) {
 
 function splitFigures(raw: string) {
   const parts: Array<{ type: "text"; text: string } | { type: "figure"; alt: string; src: string }> = []
-  const pattern = /!\[([^\]]*)\]\((data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+|https:\/\/[^\s)]+)\)/g
+  const pattern = /!\[([^\]]*)\]\((data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/=]+|https:\/\/[^\s)]+|\/chat-stickers\/[^\s)]+)\)/g
   let last = 0
   let match: RegExpExecArray | null
   while ((match = pattern.exec(raw))) {
@@ -682,9 +719,58 @@ function renderFigure(alt: string, src: string) {
   return `<img src="${escapeHtml(src)}" alt="${escapeHtml(alt || "Figure")}" class="mt-2 max-h-72 w-full rounded-lg bg-white object-contain" />`
 }
 
+type ContentSegment =
+  | { type: "html"; html: string }
+  | { type: "sticker"; label: string; src: string; emoji?: string }
+  | { type: "figure"; alt: string; src: string }
+
+function buildContentSegments(raw: string, mentionNames: string[], previewCode: boolean): ContentSegment[] {
+  const segments: ContentSegment[] = []
+  for (const part of splitCodeFences(raw)) {
+    if (part.type === "code") {
+      segments.push({ type: "html", html: renderCodeBlock(part.code, part.language, previewCode) })
+      continue
+    }
+    for (const inline of splitFigures(part.text)) {
+      if (inline.type === "figure") {
+        if (isStickerAlt(inline.alt)) {
+          const label = stickerLabelFromAlt(inline.alt)
+          const sticker = resolveChatSticker(label, inline.src)
+          if (sticker) {
+            segments.push({
+              type: "sticker",
+              label: sticker.label,
+              src: sticker.gifUrl,
+              emoji: sticker.emoji,
+            })
+          }
+        } else if (inline.src.startsWith("data:")) {
+          segments.push({ type: "figure", alt: inline.alt, src: inline.src })
+        } else {
+          segments.push({ type: "html", html: renderFigure(inline.alt, inline.src) })
+        }
+        continue
+      }
+      if (inline.text.trim()) {
+        segments.push({ type: "html", html: renderTextMarkdown(inline.text, mentionNames) })
+      }
+    }
+  }
+  return segments
+}
+
 function renderInlineMarkdown(raw: string, mentionNames: string[]) {
   return splitFigures(raw)
-    .map((part) => (part.type === "figure" ? renderFigure(part.alt, part.src) : renderTextMarkdown(part.text, mentionNames)))
+    .map((part) => {
+      if (part.type === "figure") {
+        if (isStickerAlt(part.alt)) {
+          const label = stickerLabelFromAlt(part.alt)
+          return `<span class="inline-flex rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">[${escapeHtml(label)} reaction]</span>`
+        }
+        return renderFigure(part.alt, part.src)
+      }
+      return renderTextMarkdown(part.text, mentionNames)
+    })
     .join("")
 }
 
@@ -715,14 +801,50 @@ const MessageContent = memo(function MessageContent({
   className,
   mentionNames = EMPTY_MENTIONS,
   previewCode = false,
+  inverted = false,
 }: {
   content: string
   className?: string
   mentionNames?: string[]
   previewCode?: boolean
+  inverted?: boolean
 }) {
-  const html = useMemo(() => renderMarkdown(content, mentionNames, previewCode), [content, mentionNames, previewCode])
-  return <div className={className ?? "text-sm leading-relaxed break-words"} dangerouslySetInnerHTML={{ __html: html }} />
+  const segments = useMemo(
+    () => buildContentSegments(content, mentionNames, previewCode),
+    [content, mentionNames, previewCode]
+  )
+  if (segments.length === 0) return null
+  return (
+    <div className={className ?? "text-sm leading-relaxed break-words"}>
+      {segments.map((segment, index) => {
+        if (segment.type === "sticker") {
+          return (
+            <ChatStickerBubble
+              key={`${index}-sticker-${segment.src}`}
+              label={segment.label}
+              src={segment.src}
+              emoji={segment.emoji}
+              inverted={inverted}
+            />
+          )
+        }
+        if (segment.type === "figure") {
+          return (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={`${index}-figure`}
+              src={segment.src}
+              alt={segment.alt || "Figure"}
+              className="mt-2 max-h-72 w-full rounded-lg bg-white object-contain"
+            />
+          )
+        }
+        return (
+          <div key={`${index}-html`} dangerouslySetInnerHTML={{ __html: segment.html }} />
+        )
+      })}
+    </div>
+  )
 })
 
 function TypingContent({ content, className }: { content: string; className?: string }) {
@@ -779,10 +901,8 @@ function BubbleTime({ value }: { value: string }) {
 
 function NateAvatar() {
   return (
-    <div className="relative mt-0.5 h-8 w-8 shrink-0">
-      <div className="flex h-full w-full items-center justify-center overflow-hidden rounded-full bg-slate-900 text-[11px] font-bold text-white ring-1 ring-slate-200">
-        N
-      </div>
+    <div className="relative mt-0.5 shrink-0">
+      <RemyAvatar className="h-8 w-8" title={AGENT_DISPLAY_NAME} />
     </div>
   )
 }
@@ -795,10 +915,10 @@ function NateThinkingCard() {
         className="rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2.5 shadow-sm"
         role="status"
         aria-live="polite"
-        aria-label="Nate is thinking"
+        aria-label={`${AGENT_DISPLAY_NAME} is thinking`}
       >
         <p className="text-sm font-medium text-slate-700">
-          Nate is thinking
+          {AGENT_DISPLAY_NAME} is thinking
           <span className="inline-flex w-[1.15em]" aria-hidden="true">
             {[0, 1, 2].map((dot) => (
               <span
@@ -876,7 +996,7 @@ function NateReplyCard({
       <div className="min-w-0 max-w-[min(92%,34rem)] flex-1 overflow-hidden rounded-2xl rounded-bl-md border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-1.5">
           <div className="flex items-center gap-1.5">
-            <span className="text-xs font-semibold text-slate-800">NATE</span>
+            <span className="text-xs font-semibold text-slate-800">{AGENT_DISPLAY_NAME}</span>
             {typing && (
               <span className="rounded-md border border-slate-200 bg-slate-50 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-slate-500">
                 Writing
@@ -947,18 +1067,6 @@ function withPending(prev: Message[], latest: Message[]) {
   return merged.sort((a, b) => a.created_at.localeCompare(b.created_at))
 }
 
-function SeminarIcon({ className = "h-9 w-9", iconClassName = "h-4 w-4" }: { className?: string; iconClassName?: string }) {
-  return (
-    <div
-      title="CoNet Seminar"
-      aria-label="CoNet Seminar"
-      className={`flex shrink-0 items-center justify-center rounded-full bg-slate-900 text-white ${className}`}
-    >
-      <BookOpen className={iconClassName} />
-    </div>
-  )
-}
-
 export default function ChatPanel({
   initialMessages,
   currentUserId,
@@ -1001,6 +1109,7 @@ export default function ChatPanel({
   const seenNateReplyIds = useRef<Set<string> | null>(null)
   const nateTypeArmed = useRef(false)
   const skipEmptyNateBaseline = useRef(initialMessages.length === 0)
+  const openingEnsuredRef = useRef(false)
   const outboxRef = useRef(new Map<string, OutboxItem>())
   const flushingRef = useRef(new Set<string>())
   const timersRef = useRef(new Map<string, number>())
@@ -1046,7 +1155,7 @@ export default function ChatPanel({
         content: NATE_THINKING,
         created_at: new Date().toISOString(),
         user_id: NATE_USER_ID,
-        name: "NATE",
+        name: AGENT_DISPLAY_NAME,
         avatar_url: null,
         is_ai: true,
         reply_to: null,
@@ -1391,7 +1500,12 @@ export default function ChatPanel({
       )
       .subscribe()
 
-    void fetchSessionMessages(supabase, sessionId).then((latest) => {
+    const loadMessages = async () => {
+      if (!openingEnsuredRef.current) {
+        openingEnsuredRef.current = true
+        await ensureAgentOpeningMessage(groupId, sessionId)
+      }
+      const latest = await fetchSessionMessages(supabase, sessionId)
       if (stopped) return
       if (!latest) {
         setMessagesLoaded(true)
@@ -1400,7 +1514,8 @@ export default function ChatPanel({
       setMessages((prev) => withPending(prev, latest))
       setMessagesLoaded(true)
       onReadyRef.current?.(latest)
-    })
+    }
+    void loadMessages()
     // Presence + heartbeat run after first paint so opening a session feels instant.
     const startPresence = window.setTimeout(() => {
       if (stopped) return
@@ -1520,6 +1635,27 @@ export default function ChatPanel({
     })
   }, [currentUserId, currentUserName, dbUsers, liveUsers, readOnly, tabHidden])
 
+  /** Realtime presence on this chat session only — excludes away / group-only DB presence. */
+  const sessionOnline = useMemo(() => {
+    const byId = new Map<string, SessionUser>()
+    for (const user of liveUsers) {
+      byId.set(user.id, { ...user, away: false, lastSeen: Date.now() })
+    }
+    if (!readOnly && !tabHidden && !byId.has(currentUserId)) {
+      byId.set(currentUserId, {
+        id: currentUserId,
+        name: currentUserName,
+        lastSeen: Date.now(),
+        away: false,
+      })
+    }
+    return [...byId.values()].sort((a, b) => {
+      if (a.id === currentUserId) return -1
+      if (b.id === currentUserId) return 1
+      return a.name.localeCompare(b.name)
+    })
+  }, [currentUserId, currentUserName, liveUsers, readOnly, tabHidden])
+
   const mentionPeople = useMemo(() => {
     const byId = new Map<string, MentionPerson>()
     for (const person of groupPeople) byId.set(person.id, person)
@@ -1532,6 +1668,15 @@ export default function ChatPanel({
   }, [groupPeople, online])
 
   const mentionNames = useMemo(() => mentionPeople.map((person) => person.name), [mentionPeople])
+
+  const studentFigureByUserId = useMemo(
+    () => buildStudentFigureIndexMap(mentionPeople),
+    [mentionPeople]
+  )
+  const studentFigureIndexFor = useCallback(
+    (userId: string) => studentFigureByUserId.get(userId) ?? 0,
+    [studentFigureByUserId]
+  )
 
   return (
     <section className="flex h-full min-h-0 flex-col bg-white">
@@ -1556,24 +1701,25 @@ export default function ChatPanel({
         </div>
         <div className="flex min-w-0 flex-1 flex-col items-start gap-1.5 sm:items-end">
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-            {online.length} online
+            {sessionOnline.length} online
           </p>
           <div className="flex max-h-24 w-full flex-wrap gap-1.5 overflow-y-auto sm:justify-end">
-            {online.length === 0 && (
+            {sessionOnline.length === 0 && (
               <p className="text-xs text-slate-500">Waiting for people to join…</p>
             )}
-            {online.map((person) => (
+            {sessionOnline.map((person) => (
               <span
                 key={person.id}
-                className={`inline-flex items-center gap-1.5 rounded-full border bg-slate-50 py-1 pl-1 pr-2.5 ${
-                  person.away ? "border-dashed border-slate-300 opacity-70" : "border-slate-200"
-                }`}
-                title={`${person.name}${person.away ? " · away" : ""} · CoNet Seminar`}
+                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 py-1 pl-1 pr-2.5"
+                title={`${person.name} · CoNet Seminar`}
               >
-                <SeminarIcon className="h-6 w-6" iconClassName="h-3 w-3" />
+                <StudentFigureAvatar
+                  figureIndex={studentFigureIndexFor(person.id)}
+                  className="h-6 w-6"
+                  title={person.name}
+                />
                 <span className="max-w-[9rem] truncate text-xs font-semibold text-slate-700">
                   {person.id === currentUserId ? `${person.name} (you)` : person.name}
-                  {person.away ? " · away" : ""}
                 </span>
               </span>
             ))}
@@ -1619,7 +1765,10 @@ export default function ChatPanel({
               <div key={msg.id} className={`group flex ${mine ? "justify-end" : "justify-start"}`}>
                 <div className={`flex max-w-[min(100%,34rem)] gap-3 ${mine ? "flex-row-reverse" : ""} ${pending ? "opacity-80" : ""}`}>
                   <div className="mt-1">
-                    <SeminarIcon />
+                    <StudentFigureAvatar
+                      figureIndex={studentFigureIndexFor(msg.user_id)}
+                      title={msg.name}
+                    />
                   </div>
                   <div
                     className={`rounded-2xl px-4 py-3 ${
@@ -1634,7 +1783,7 @@ export default function ChatPanel({
                         <p className="truncate">{stripFigures(msg.original_message.content) || "Shared a figure"}</p>
                       </div>
                     )}
-                    <MessageContent content={msg.content} mentionNames={mentionNames} />
+                    <MessageContent content={msg.content} mentionNames={mentionNames} inverted={mine} />
                     <div className="mt-2 flex items-center justify-between gap-3">
                       <p className={`text-[11px] font-medium ${mine ? "text-white/70" : "text-slate-400"}`}>
                         {msg.name}
@@ -1670,6 +1819,7 @@ export default function ChatPanel({
             currentUserId={currentUserId}
             currentUserName={currentUserName}
             people={mentionPeople}
+            studentFigureIndexFor={studentFigureIndexFor}
             replyingTo={replyingTo}
             onCancelReply={cancelReply}
             newintervene={newintervene}

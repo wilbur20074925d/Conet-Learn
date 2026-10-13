@@ -2,10 +2,15 @@
 -- Run this once in the Supabase SQL editor after conet-schema.sql.
 -- Safe to re-run.
 --
--- Students sign in with username = name without spaces (uppercase), password = student ID.
+-- Students sign in with email and password; username is a separate display/login handle field.
 -- Teachers sign in with their email and the password set here.
 
 alter table public."ConetUsers" add column if not exists student_id text;
+alter table public."ConetUsers" add column if not exists username text;
+
+create unique index if not exists "ConetUsers_username_lower_idx"
+  on public."ConetUsers" (lower(username))
+  where username is not null;
 
 create or replace function public.conet_hash_password(p_password text)
 returns text
@@ -24,7 +29,8 @@ create or replace function public.conet_create_student(
   p_email text,
   p_name text,
   p_password text default null,
-  p_student_id text default null
+  p_student_id text default null,
+  p_username text default null
 )
 returns uuid
 language plpgsql
@@ -35,6 +41,7 @@ declare
   new_id uuid := gen_random_uuid();
   clean_email text := lower(trim(p_email));
   clean_name text := trim(p_name);
+  clean_username text := nullif(trim(p_username), '');
   clean_password text := coalesce(nullif(trim(p_password), ''), 'Password123');
   clean_student_id text := nullif(trim(p_student_id), '');
 begin
@@ -44,14 +51,23 @@ begin
   if clean_name is null or length(clean_name) < 1 or length(clean_name) > 80 then
     raise exception 'invalid name';
   end if;
+  if clean_username is null or length(clean_username) < 1 or length(clean_username) > 64 then
+    raise exception 'invalid username';
+  end if;
   if clean_email !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
     raise exception 'invalid email';
   end if;
-  if length(clean_password) < 1 or length(clean_password) > 128 then
+  if length(clean_password) < 8 or length(clean_password) > 128 then
     raise exception 'invalid password';
   end if;
   if exists (select 1 from auth.users where lower(email) = clean_email) then
     raise exception 'already registered';
+  end if;
+  if exists (
+    select 1 from public."ConetUsers"
+    where username is not null and lower(username) = lower(clean_username)
+  ) then
+    raise exception 'username taken';
   end if;
 
   insert into auth.users (
@@ -79,7 +95,7 @@ begin
     public.conet_hash_password(clean_password),
     now(),
     '{"provider":"email","providers":["email"]}'::jsonb,
-    jsonb_build_object('name', clean_name, 'role', 'student'),
+    jsonb_build_object('name', clean_name, 'role', 'student', 'username', clean_username),
     now(),
     now(),
     '',
@@ -117,6 +133,7 @@ begin
   set
     name = clean_name,
     email = clean_email,
+    username = clean_username,
     role = 'student',
     student_id = clean_student_id
   where auth_id = new_id;
@@ -251,7 +268,7 @@ begin
     raise exception 'Student not found';
   end if;
 
-  next_password := coalesce(nullif(trim(stored_id), ''), 'Password123');
+  next_password := 'Password123';
 
   update auth.users
   set
@@ -330,10 +347,11 @@ end;
 $$;
 
 revoke all on function public.conet_create_student(text, text, text, text) from public;
+revoke all on function public.conet_create_student(text, text, text, text, text) from public;
 revoke all on function public.conet_create_teacher(text, text, text) from public;
 revoke all on function public.conet_reset_student_password(uuid) from public;
 revoke all on function public.conet_delete_students(uuid[]) from public;
-grant execute on function public.conet_create_student(text, text, text, text) to authenticated;
+grant execute on function public.conet_create_student(text, text, text, text, text) to authenticated;
 grant execute on function public.conet_create_teacher(text, text, text) to authenticated;
 grant execute on function public.conet_reset_student_password(uuid) to authenticated;
 grant execute on function public.conet_delete_students(uuid[]) to authenticated;

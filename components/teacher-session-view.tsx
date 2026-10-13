@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import ChatPanel from "@/components/chat-panel"
+import NateModeSwitch from "@/components/nate-mode-switch"
 import CollaborativeDocumentationPanel from "@/components/collaborative-docs/CollaborativeDocumentationPanel"
 import type { CollaborativeNote } from "@/lib/collaborative-notes"
 import type { Message } from "@/lib/map-messages"
@@ -23,7 +24,7 @@ export type IndividualNoteView = {
 
 function partTitle(part: "thoughts" | "insights" | "both" | undefined) {
   if (part === "thoughts") return "Initial thoughts"
-  if (part === "insights") return "New insights and supplementary points"
+  if (part === "insights") return "Individual Reflection: New insights and supplementary points"
   return "Both parts"
 }
 
@@ -152,7 +153,7 @@ function NoteReadout({
                 </div>
                 <div>
                   <p className="text-xs font-medium text-slate-500">
-                    New insights and supplementary points ·{" "}
+                    Individual Reflection: New insights and supplementary points ·{" "}
                     {latestInsights ? `Submitted ${submittedAt(latestInsights.createdAt)}` : "Not submitted"}
                   </p>
                   <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
@@ -174,7 +175,7 @@ function NoteReadout({
                         <div className="mt-2 space-y-3">
                           {item.part !== "insights" && <NoteText label="Initial thoughts" value={item.concept1} />}
                           {item.part !== "thoughts" && (
-                            <NoteText label="New insights and supplementary points" value={item.concept2} />
+                            <NoteText label="Individual Reflection: New insights and supplementary points" value={item.concept2} />
                           )}
                         </div>
                       </li>
@@ -242,7 +243,8 @@ export default function TeacherSessionView({
           <h1 className="truncate text-xl font-bold tracking-tight text-slate-900">{groupName}</h1>
           <p className="mt-0.5 text-xs text-slate-500">You stay hidden from the student chat and group document.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <NateModeSwitch groupId={groupId} mode={newintervene} />
           <nav className="flex items-center rounded-xl border border-slate-200 bg-white p-1">
             <button
               type="button"

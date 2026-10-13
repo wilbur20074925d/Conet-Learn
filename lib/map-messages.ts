@@ -1,3 +1,5 @@
+import { AGENT_DISPLAY_NAME, NATE_USER_ID } from "./nate"
+
 export interface Message {
   id: string
   content: string
@@ -29,8 +31,6 @@ export type RawMessage = {
     | null
 }
 
-const NATE_USER_ID = "00000000-0000-0000-0000-000000000999"
-
 function authorOf(row: RawMessage) {
   return Array.isArray(row.ConetUsers) ? row.ConetUsers[0] : row.ConetUsers
 }
@@ -46,7 +46,7 @@ export function mapMessageRows(rows: RawMessage[]): Message[] {
       content: row.content,
       created_at: row.created_at,
       user_id: row.user_id,
-      name: author?.name || "Member",
+      name: row.user_id === NATE_USER_ID || author?.role === "ai" ? AGENT_DISPLAY_NAME : author?.name || "Member",
       avatar_url: author?.avatar_url || null,
       is_ai: author?.role === "ai" || row.user_id === NATE_USER_ID,
       authorRole: author?.role,
@@ -56,7 +56,10 @@ export function mapMessageRows(rows: RawMessage[]): Message[] {
         ? {
             id: original.id,
             content: original.content,
-            user_name: originalAuthor?.name || "Member",
+            user_name:
+              original.user_id === NATE_USER_ID || originalAuthor?.role === "ai"
+                ? AGENT_DISPLAY_NAME
+                : originalAuthor?.name || "Member",
           }
         : null,
     }

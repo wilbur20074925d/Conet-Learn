@@ -12,19 +12,27 @@ import {
 } from "@/components/ui/dialog"
 import { Progress } from "@/components/ui/progress"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { createStudentAccount, type ImportRowResult } from "@/lib/account-actions"
-import { usernameFromName } from "@/lib/login-identity"
+import { createStudentAccount, type CreateStudentInput, type ImportRowResult } from "@/lib/account-actions"
 import {
   draftRowsFromMatrix,
-  guessColumnIndices,
+  guessStudentImportColumns,
   matrixColumnLabels,
   parseDelimitedClipboard,
   readStudentFileMatrix,
   type ParsedStudentDraft,
+  type StudentImportColumns,
 } from "@/lib/parse-student-spreadsheet"
 
 const fieldClass =
   "h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:ring-2 focus:ring-sky-500/15"
+
+const DEFAULT_COLUMNS: StudentImportColumns = {
+  nameCol: 0,
+  usernameCol: 1,
+  emailCol: 2,
+  passwordCol: 3,
+  studentIdCol: 4,
+}
 
 type ImportPhase = "idle" | "importing" | "done"
 
@@ -41,14 +49,16 @@ export default function StudentImportDialog({
 
   const [matrix, setMatrix] = useState<string[][] | null>(null)
   const [hasHeaderRow, setHasHeaderRow] = useState(true)
-  const [nameCol, setNameCol] = useState(0)
-  const [idCol, setIdCol] = useState(1)
+  const [columns, setColumns] = useState<StudentImportColumns>(DEFAULT_COLUMNS)
   const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set())
   const [pasteText, setPasteText] = useState("")
   const [parseError, setParseError] = useState("")
 
   const [manualName, setManualName] = useState("")
-  const [manualId, setManualId] = useState("")
+  const [manualUsername, setManualUsername] = useState("")
+  const [manualEmail, setManualEmail] = useState("")
+  const [manualPassword, setManualPassword] = useState("")
+  const [manualStudentId, setManualStudentId] = useState("")
 
   const [phase, setPhase] = useState<ImportPhase>("idle")
   const [progress, setProgress] = useState({ done: 0, total: 0, currentLabel: "" })
@@ -62,8 +72,8 @@ export default function StudentImportDialog({
 
   const drafts = useMemo(() => {
     if (!matrix) return []
-    return draftRowsFromMatrix(matrix, { hasHeaderRow, nameCol, idCol })
-  }, [matrix, hasHeaderRow, nameCol, idCol])
+    return draftRowsFromMatrix(matrix, { hasHeaderRow, columns })
+  }, [matrix, hasHeaderRow, columns])
 
   const draftKey = (row: ParsedStudentDraft) => String(row.sourceIndex)
 
@@ -76,39 +86,39 @@ export default function StudentImportDialog({
     setSelectedKeys(new Set(source.map((row) => draftKey(row))))
   }
 
-  function remapColumns(nextNameCol: number, nextIdCol: number) {
-    setNameCol(nextNameCol)
-    setIdCol(nextIdCol)
-    if (!matrix) return
-    const nextDrafts = draftRowsFromMatrix(matrix, { hasHeaderRow, nameCol: nextNameCol, idCol: nextIdCol })
-    selectAllDraftKeys(nextDrafts)
+  function setColumn<K extends keyof StudentImportColumns>(key: K, value: StudentImportColumns[K]) {
+    setColumns((prev) => {
+      const next = { ...prev, [key]: value }
+      if (matrix) {
+        const nextDrafts = draftRowsFromMatrix(matrix, { hasHeaderRow, columns: next })
+        selectAllDraftKeys(nextDrafts)
+      }
+      return next
+    })
   }
 
   function remapHeaderRow(nextHasHeader: boolean) {
     setHasHeaderRow(nextHasHeader)
     if (!matrix) return
     const header = nextHasHeader ? matrix[0] : matrix[0].map((_, i) => `Column ${i + 1}`)
-    const guess = guessColumnIndices(header)
-    setNameCol(guess.nameCol)
-    setIdCol(guess.idCol)
-    const nextDrafts = draftRowsFromMatrix(matrix, {
-      hasHeaderRow: nextHasHeader,
-      nameCol: guess.nameCol,
-      idCol: guess.idCol,
-    })
+    const guess = guessStudentImportColumns(header)
+    setColumns(guess)
+    const nextDrafts = draftRowsFromMatrix(matrix, { hasHeaderRow: nextHasHeader, columns: guess })
     selectAllDraftKeys(nextDrafts)
   }
 
   const resetWorkspace = useCallback(() => {
     setMatrix(null)
     setHasHeaderRow(true)
-    setNameCol(0)
-    setIdCol(1)
+    setColumns(DEFAULT_COLUMNS)
     setSelectedKeys(new Set())
     setPasteText("")
     setParseError("")
     setManualName("")
-    setManualId("")
+    setManualUsername("")
+    setManualEmail("")
+    setManualPassword("")
+    setManualStudentId("")
     setPhase("idle")
     setProgress({ done: 0, total: 0, currentLabel: "" })
     setResults([])
@@ -118,17 +128,16 @@ export default function StudentImportDialog({
 
   function applyMatrix(next: string[][]) {
     if (next.length === 0) {
-      setParseError("No rows found. Include a header row with name and student ID columns.")
+      setParseError("No rows found. Include columns for name, username, email, and password.")
       setMatrix(null)
       return
     }
     setParseError("")
     setMatrix(next)
     const header = hasHeaderRow ? next[0] : next[0].map((_, i) => `Column ${i + 1}`)
-    const guess = guessColumnIndices(header)
-    setNameCol(guess.nameCol)
-    setIdCol(guess.idCol)
-    const initial = draftRowsFromMatrix(next, { hasHeaderRow, nameCol: guess.nameCol, idCol: guess.idCol })
+    const guess = guessStudentImportColumns(header)
+    setColumns(guess)
+    const initial = draftRowsFromMatrix(next, { hasHeaderRow, columns: guess })
     selectAllDraftKeys(initial)
   }
 
@@ -170,7 +179,7 @@ export default function StudentImportDialog({
     else setSelectedKeys(new Set())
   }
 
-  async function runImport(rows: { name: string; studentId: string }[]) {
+  async function runImport(rows: CreateStudentInput[]) {
     if (rows.length === 0 || phase === "importing") return
     setPhase("importing")
     setImportError("")
@@ -181,11 +190,11 @@ export default function StudentImportDialog({
     for (let i = 0; i < rows.length; i += 1) {
       const row = rows[i]
       setProgress({ done: i, total: rows.length, currentLabel: row.name })
-      const result = await createStudentAccount(row.name, row.studentId)
+      const result = await createStudentAccount(row)
       if (result.ok) {
-        collected.push({ name: row.name, studentId: row.studentId, ok: true })
+        collected.push({ name: row.name, email: row.email, ok: true })
       } else {
-        collected.push({ name: row.name, studentId: row.studentId, ok: false, error: result.error })
+        collected.push({ name: row.name, email: row.email, ok: false, error: result.error })
       }
       setProgress({ done: i + 1, total: rows.length, currentLabel: row.name })
       setResults([...collected])
@@ -196,23 +205,44 @@ export default function StudentImportDialog({
   }
 
   async function onImportSelected() {
-    await runImport(selectedDrafts.map(({ name, studentId }) => ({ name, studentId })))
+    await runImport(
+      selectedDrafts.map(({ name, username, email, password, studentId }) => ({
+        name,
+        username,
+        email,
+        password,
+        studentId,
+      }))
+    )
   }
 
   async function onManualSubmit(event: FormEvent) {
     event.preventDefault()
     const name = manualName.trim()
-    const studentId = manualId.trim()
-    if (!name || !studentId) return
-    await runImport([{ name, studentId }])
+    const username = manualUsername.trim()
+    const email = manualEmail.trim()
+    const password = manualPassword
+    const studentId = manualStudentId.trim() || null
+    if (!name || !username || !email || password.length < 8) return
+    await runImport([{ name, username, email, password, studentId }])
     setManualName("")
-    setManualId("")
+    setManualUsername("")
+    setManualEmail("")
+    setManualPassword("")
+    setManualStudentId("")
   }
 
   const progressPercent = progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0
   const createdCount = results.filter((r) => r.ok).length
   const failedCount = results.filter((r) => !r.ok).length
-  const previewUsername = manualName.trim() ? usernameFromName(manualName) : ""
+  const manualReady =
+    manualName.trim() &&
+    manualUsername.trim() &&
+    manualEmail.trim() &&
+    manualPassword.length >= 8
+
+  const requiredCols = [columns.nameCol, columns.usernameCol, columns.emailCol, columns.passwordCol]
+  const columnsConflict = new Set(requiredCols).size !== requiredCols.length
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -227,12 +257,12 @@ export default function StudentImportDialog({
         </button>
       </DialogTrigger>
 
-      <DialogContent className="max-h-[min(90vh,720px)] max-w-lg gap-0 overflow-hidden border-slate-200 p-0 sm:rounded-2xl">
+      <DialogContent className="max-h-[min(92vh,760px)] max-w-xl gap-0 overflow-hidden border-slate-200 p-0 sm:rounded-2xl">
         <DialogHeader className="space-y-1 border-b border-slate-100 bg-gradient-to-b from-slate-50 to-white px-5 py-4 text-left">
           <DialogTitle className="text-base font-bold text-slate-900">Add student accounts</DialogTitle>
           <DialogDescription className="text-xs leading-relaxed text-slate-500">
-            Upload CSV or spreadsheet, paste from clipboard, or type one student. Usernames are uppercase names
-            without spaces; passwords are student IDs.
+            Each student needs a display name, username, email, and password (min. 8 characters). They sign in with
+            email and password. Student ID is optional and used for class rosters only.
           </DialogDescription>
         </DialogHeader>
 
@@ -252,19 +282,15 @@ export default function StudentImportDialog({
             <p className="flex items-center gap-2 text-sm font-medium text-slate-900">
               <CheckCircle2 className="h-4 w-4 text-emerald-600" />
               {createdCount} created
-              {failedCount > 0 && (
-                <span className="font-normal text-red-600">
-                  · {failedCount} failed
-                </span>
-              )}
+              {failedCount > 0 && <span className="font-normal text-red-600">· {failedCount} failed</span>}
             </p>
             {failedCount > 0 && (
               <ul className="mt-2 max-h-24 space-y-1 overflow-y-auto text-xs text-red-700">
                 {results
                   .filter((r) => !r.ok)
                   .map((r) => (
-                    <li key={`${r.name}-${r.studentId}`}>
-                      {r.name} ({r.studentId}): {r.error}
+                    <li key={`${r.name}-${r.email}`}>
+                      {r.name} ({r.email}): {r.error}
                     </li>
                   ))}
               </ul>
@@ -323,19 +349,18 @@ export default function StudentImportDialog({
               >
                 <FileSpreadsheet className="h-8 w-8 text-slate-400" />
                 <span className="text-sm font-semibold text-slate-800">Choose CSV or spreadsheet</span>
-                <span className="text-xs text-slate-500">.csv, .xlsx, .xls — first sheet</span>
+                <span className="text-xs text-slate-500">Columns: name, username, email, password (+ optional student ID)</span>
               </button>
               {matrix && tab === "upload" && (
                 <ColumnAndRowPreview
                   columnLabels={columnLabels}
-                  nameCol={nameCol}
-                  idCol={idCol}
+                  columns={columns}
                   hasHeaderRow={hasHeaderRow}
                   drafts={drafts}
+                  columnsConflict={columnsConflict}
                   selectedKeys={selectedKeys}
                   disabled={phase === "importing"}
-                  onNameCol={(col) => remapColumns(col, idCol)}
-                  onIdCol={(col) => remapColumns(nameCol, col)}
+                  onColumn={setColumn}
                   onHasHeaderRow={remapHeaderRow}
                   onToggleRow={toggleRow}
                   onToggleAll={toggleAllRows}
@@ -348,7 +373,9 @@ export default function StudentImportDialog({
               <textarea
                 value={pasteText}
                 onChange={(e) => setPasteText(e.target.value)}
-                placeholder={"Paste rows from Excel or Sheets…\nName\tStudent ID\nChan Tai Men\t2A01"}
+                placeholder={
+                  "Paste rows from Excel or Sheets…\nName\tUsername\tEmail\tPassword\tStudent ID\nChan Tai Men\tchantm\tchan@school.edu\tSecretPass1\t2A01"
+                }
                 disabled={phase === "importing"}
                 rows={4}
                 className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-500/15 disabled:opacity-50"
@@ -364,14 +391,13 @@ export default function StudentImportDialog({
               {matrix && tab === "paste" && (
                 <ColumnAndRowPreview
                   columnLabels={columnLabels}
-                  nameCol={nameCol}
-                  idCol={idCol}
+                  columns={columns}
                   hasHeaderRow={hasHeaderRow}
                   drafts={drafts}
+                  columnsConflict={columnsConflict}
                   selectedKeys={selectedKeys}
                   disabled={phase === "importing"}
-                  onNameCol={(col) => remapColumns(col, idCol)}
-                  onIdCol={(col) => remapColumns(nameCol, col)}
+                  onColumn={setColumn}
                   onHasHeaderRow={remapHeaderRow}
                   onToggleRow={toggleRow}
                   onToggleAll={toggleAllRows}
@@ -381,34 +407,56 @@ export default function StudentImportDialog({
             </TabsContent>
 
             <TabsContent value="type" className="mt-3">
-              <form onSubmit={(e) => void onManualSubmit(e)} className="space-y-2.5">
+              <form onSubmit={(e) => void onManualSubmit(e)} className="grid gap-2.5 sm:grid-cols-2">
                 <input
                   value={manualName}
                   onChange={(e) => setManualName(e.target.value)}
-                  placeholder="Student name"
+                  placeholder="Display name"
                   disabled={phase === "importing"}
-                  className={fieldClass}
+                  className={`${fieldClass} sm:col-span-2`}
                   autoComplete="off"
                   maxLength={80}
                 />
                 <input
-                  value={manualId}
-                  onChange={(e) => setManualId(e.target.value)}
-                  placeholder="Student ID (password)"
+                  value={manualUsername}
+                  onChange={(e) => setManualUsername(e.target.value)}
+                  placeholder="Username"
                   disabled={phase === "importing"}
                   className={fieldClass}
                   autoComplete="off"
                   maxLength={64}
                 />
-                {previewUsername && (
-                  <p className="text-xs text-slate-500">
-                    Login: <span className="font-mono font-semibold text-slate-800">{previewUsername}</span>
-                  </p>
-                )}
+                <input
+                  value={manualStudentId}
+                  onChange={(e) => setManualStudentId(e.target.value)}
+                  placeholder="Student ID (optional)"
+                  disabled={phase === "importing"}
+                  className={fieldClass}
+                  autoComplete="off"
+                  maxLength={64}
+                />
+                <input
+                  value={manualEmail}
+                  onChange={(e) => setManualEmail(e.target.value)}
+                  placeholder="Email"
+                  type="email"
+                  disabled={phase === "importing"}
+                  className={`${fieldClass} sm:col-span-2`}
+                  autoComplete="off"
+                />
+                <input
+                  value={manualPassword}
+                  onChange={(e) => setManualPassword(e.target.value)}
+                  placeholder="Password (min. 8 characters)"
+                  type="password"
+                  disabled={phase === "importing"}
+                  className={`${fieldClass} sm:col-span-2`}
+                  autoComplete="new-password"
+                />
                 <button
                   type="submit"
-                  disabled={phase === "importing" || !manualName.trim() || !manualId.trim()}
-                  className="h-9 w-full rounded-lg bg-slate-900 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                  disabled={phase === "importing" || !manualReady}
+                  className="h-9 w-full rounded-lg bg-slate-900 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50 sm:col-span-2"
                 >
                   {phase === "importing" ? "Creating…" : "Create account"}
                 </button>
@@ -436,90 +484,130 @@ export default function StudentImportDialog({
   )
 }
 
+function ColumnSelect({
+  label,
+  value,
+  labels,
+  disabled,
+  onChange,
+  allowNone,
+}: {
+  label: string
+  value: number
+  labels: string[]
+  disabled: boolean
+  onChange: (n: number) => void
+  allowNone?: boolean
+}) {
+  return (
+    <label className="block text-[11px] font-medium text-slate-500">
+      {label}
+      <select
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="mt-1 h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-900"
+      >
+        {allowNone && <option value={-1}>Not mapped</option>}
+        {labels.map((colLabel, index) => (
+          <option key={`${label}-${index}`} value={index}>
+            {colLabel}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
 function ColumnAndRowPreview({
   columnLabels,
-  nameCol,
-  idCol,
+  columns,
   hasHeaderRow,
   drafts,
+  columnsConflict,
   selectedKeys,
   disabled,
-  onNameCol,
-  onIdCol,
+  onColumn,
   onHasHeaderRow,
   onToggleRow,
   onToggleAll,
   draftKey,
 }: {
   columnLabels: string[]
-  nameCol: number
-  idCol: number
+  columns: StudentImportColumns
   hasHeaderRow: boolean
   drafts: ParsedStudentDraft[]
+  columnsConflict: boolean
   selectedKeys: Set<string>
   disabled: boolean
-  onNameCol: (n: number) => void
-  onIdCol: (n: number) => void
+  onColumn: <K extends keyof StudentImportColumns>(key: K, value: StudentImportColumns[K]) => void
   onHasHeaderRow: (v: boolean) => void
   onToggleRow: (key: string) => void
   onToggleAll: (selectAll: boolean) => void
   draftKey: (row: ParsedStudentDraft) => string
 }) {
   const allSelected = drafts.length > 0 && drafts.every((row) => selectedKeys.has(draftKey(row)))
+  const studentIdValue = columns.studentIdCol ?? -1
 
   return (
     <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-1.5 text-xs text-slate-600">
-          <input
-            type="checkbox"
-            checked={hasHeaderRow}
-            disabled={disabled}
-            onChange={(e) => onHasHeaderRow(e.target.checked)}
-            className="h-3.5 w-3.5 rounded border-slate-300"
-          />
-          First row is header
-        </label>
-      </div>
+      <label className="flex items-center gap-1.5 text-xs text-slate-600">
+        <input
+          type="checkbox"
+          checked={hasHeaderRow}
+          disabled={disabled}
+          onChange={(e) => onHasHeaderRow(e.target.checked)}
+          className="h-3.5 w-3.5 rounded border-slate-300"
+        />
+        First row is header
+      </label>
       <div className="grid grid-cols-2 gap-2">
-        <label className="block text-[11px] font-medium text-slate-500">
-          Name column
-          <select
-            value={nameCol}
-            disabled={disabled}
-            onChange={(e) => onNameCol(Number(e.target.value))}
-            className="mt-1 h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-900"
-          >
-            {columnLabels.map((label, index) => (
-              <option key={`name-${index}`} value={index}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block text-[11px] font-medium text-slate-500">
-          Student ID column
-          <select
-            value={idCol}
-            disabled={disabled}
-            onChange={(e) => onIdCol(Number(e.target.value))}
-            className="mt-1 h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-900"
-          >
-            {columnLabels.map((label, index) => (
-              <option key={`id-${index}`} value={index}>
-                {label}
-              </option>
-            ))}
-          </select>
-        </label>
+        <ColumnSelect
+          label="Name"
+          value={columns.nameCol}
+          labels={columnLabels}
+          disabled={disabled}
+          onChange={(n) => onColumn("nameCol", n)}
+        />
+        <ColumnSelect
+          label="Username"
+          value={columns.usernameCol}
+          labels={columnLabels}
+          disabled={disabled}
+          onChange={(n) => onColumn("usernameCol", n)}
+        />
+        <ColumnSelect
+          label="Email"
+          value={columns.emailCol}
+          labels={columnLabels}
+          disabled={disabled}
+          onChange={(n) => onColumn("emailCol", n)}
+        />
+        <ColumnSelect
+          label="Password"
+          value={columns.passwordCol}
+          labels={columnLabels}
+          disabled={disabled}
+          onChange={(n) => onColumn("passwordCol", n)}
+        />
+        <ColumnSelect
+          label="Student ID"
+          value={studentIdValue}
+          labels={columnLabels}
+          disabled={disabled}
+          allowNone
+          onChange={(n) => onColumn("studentIdCol", n < 0 ? null : n)}
+        />
       </div>
 
-      {nameCol === idCol && (
-        <p className="text-xs text-amber-800">Pick two different columns for name and student ID.</p>
+      {columnsConflict && (
+        <p className="text-xs text-amber-800">Name, username, email, and password must use four different columns.</p>
       )}
 
       {drafts.length === 0 ? (
-        <p className="py-4 text-center text-xs text-slate-500">No complete rows with name and ID in those columns.</p>
+        <p className="py-4 text-center text-xs text-slate-500">
+          No complete rows in those columns. Each row needs name, username, email, and password.
+        </p>
       ) : (
         <>
           <div className="flex items-center justify-between gap-2">
@@ -535,10 +623,9 @@ function ColumnAndRowPreview({
             </label>
             <span className="text-[11px] text-slate-400">{selectedKeys.size} selected</span>
           </div>
-          <ul className="max-h-40 space-y-1 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50/50 p-1">
+          <ul className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50/50 p-1">
             {drafts.map((row) => {
               const key = draftKey(row)
-              const login = usernameFromName(row.name)
               return (
                 <li key={key}>
                   <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-white">
@@ -550,8 +637,8 @@ function ColumnAndRowPreview({
                       className="h-3.5 w-3.5 shrink-0 rounded border-slate-300"
                     />
                     <span className="min-w-0 flex-1 truncate font-medium text-slate-900">{row.name}</span>
-                    <span className="shrink-0 font-mono text-slate-500">{row.studentId}</span>
-                    <span className="hidden shrink-0 font-mono text-[10px] text-slate-400 sm:inline">{login}</span>
+                    <span className="hidden shrink-0 font-mono text-[10px] text-slate-500 sm:inline">{row.username}</span>
+                    <span className="shrink-0 truncate font-mono text-[10px] text-slate-400 max-w-[8rem]">{row.email}</span>
                   </label>
                 </li>
               )

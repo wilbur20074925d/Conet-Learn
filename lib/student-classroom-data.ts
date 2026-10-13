@@ -1,6 +1,6 @@
 import "server-only"
 
-import { getDocument, getSessionMessages, type GroupMember } from "@/lib/actions"
+import { ensureAgentOpeningMessage, getDocument, getSessionMessages, type GroupMember } from "@/lib/actions"
 import { canonicalSession } from "@/lib/canonical-session"
 import { listGroupSessions, type ChatSession } from "@/lib/classroom"
 import { listCollaborativeNotes, type CollaborativeNote } from "@/lib/collaborative-notes"
@@ -39,13 +39,12 @@ export async function loadStudentClassroom(
   requestedSessionId?: string | null
 ): Promise<{ ok: true; data: StudentClassroomPayload } | { ok: false; error: string }> {
   const supabase = await createClient()
-  const [chats, notesResult, document, peers, groupRow, requestedMessages] = await Promise.all([
+  const [chats, notesResult, document, peers, groupRow] = await Promise.all([
     listGroupSessions(groupId),
     listCollaborativeNotes(groupId),
     getDocument(groupId, profileId),
     listGroupPeers(groupId, profileId),
     supabase.from("ConetGroups").select("class_session_id").eq("id", groupId).maybeSingle(),
-    requestedSessionId ? getSessionMessages(requestedSessionId) : Promise.resolve(null),
   ])
 
   if (!chats.ok) return { ok: false, error: chats.error }
@@ -55,7 +54,8 @@ export async function loadStudentClassroom(
     : null
   const active = requested || canonicalSession(chats.sessions)
 
-  const initialMessages = requestedMessages ?? (active ? await getSessionMessages(active.id) : [])
+  if (active) await ensureAgentOpeningMessage(groupId, active.id)
+  const initialMessages = active ? await getSessionMessages(active.id) : []
 
   return {
     ok: true,

@@ -4,7 +4,6 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js"
 import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { getSessionContext } from "./actions"
-import { displayLoginUsername, loginEmailFromUsername, usernameFromName } from "./login-identity"
 import { INITIAL_STUDENT_PASSWORD } from "./student-password"
 import { supabasePublishableKey, supabaseUrl } from "./supabase/env"
 import { createClient } from "./supabase/server"
@@ -12,23 +11,36 @@ import { createClient } from "./supabase/server"
 export type ManagedAccount = {
   id: string
   name: string
+  username: string | null
   email: string | null
   role: "teacher" | "student"
   studentId: string | null
-  loginUsername: string
 }
 
-export type ImportStudentRow = {
+export type CreateStudentInput = {
   name: string
-  studentId: string
+  username: string
+  email: string
+  password: string
+  studentId?: string | null
 }
+
+export type ImportStudentRow = CreateStudentInput
 
 export type ImportRowResult = {
   name: string
-  studentId: string
+  email: string
   ok: boolean
   error?: string
 }
+
+const createStudentSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+  username: z.string().trim().min(1).max(64),
+  email: z.string().trim().email().max(200),
+  password: z.string().min(8).max(128),
+  studentId: z.string().trim().max(64).optional().nullable(),
+})
 
 function missingFunction(error: { code?: string; message?: string } | null) {
   if (!error) return false
@@ -39,15 +51,17 @@ function missingFunction(error: { code?: string; message?: string } | null) {
 function friendly(message: string) {
   const text = message.toLowerCase()
   if (text.includes("already registered") || text.includes("already been registered") || text.includes("already exists")) {
-    return "An account with this login already exists."
+    return "An account with this email already exists."
   }
+  if (text.includes("username taken")) return "That username is already in use."
   if (text.includes("only a teacher can create")) return "Only a teacher can create accounts."
   if (text.includes("only a teacher can reset")) return "Only a teacher can reset a password."
   if (text.includes("only a teacher can delete")) return "Only a teacher can delete student accounts."
   if (text.includes("student not found")) return "That student account is no longer available."
   if (text.includes("invalid email")) return "Enter a valid email address."
+  if (text.includes("invalid username")) return "Enter a username between 1 and 64 characters."
   if (text.includes("invalid name")) return "Use a name between 1 and 80 characters."
-  if (text.includes("invalid password")) return "Use a password between 8 and 128 characters for teachers."
+  if (text.includes("invalid password")) return "Use a password between 8 and 128 characters."
   if (text.includes("password hashing") || text.includes("pgcrypto")) {
     return "Password setup is missing in Supabase. Run supabase/conet-accounts.sql in the SQL editor."
   }
@@ -77,6 +91,7 @@ function mapAccount(row: {
   id: string
   name: string
   email: string | null
+  username: string | null
   role: string
   student_id: string | null
 }): ManagedAccount {
@@ -84,10 +99,10 @@ function mapAccount(row: {
   return {
     id: row.id,
     name: row.name,
+    username: row.username,
     email: row.email,
     role,
     studentId: row.student_id,
-    loginUsername: displayLoginUsername(row.email),
   }
 }
 
@@ -100,7 +115,7 @@ export async function listManagedAccounts(): Promise<
   const supabase = await createClient()
   const { data, error } = await supabase
     .from("ConetUsers")
-    .select("id, name, email, role, student_id")
+    .select("id, name, email, username, role, student_id")
     .in("role", ["student", "teacher"])
     .order("name", { ascending: true })
 
@@ -110,6 +125,7 @@ export async function listManagedAccounts(): Promise<
     id: string
     name: string
     email: string | null
+    username: string | null
     role: string
     student_id: string | null
   }>
@@ -125,30 +141,29 @@ export async function listManagedAccounts(): Promise<
   return { ok: true, students, teachers }
 }
 
-async function createStudentAccountInternal(name: string, studentId: string) {
-  const parsed = z
-    .object({
-      name: z.string().trim().min(1).max(80),
-      studentId: z.string().trim().min(1).max(64),
-    })
-    .safeParse({ name, studentId })
-  if (!parsed.success) return { ok: false as const, error: "Enter a student name and ID." }
+async function createStudentAccountInternal(input: CreateStudentInput) {
+  const parsed = createStudentSchema.safeParse(input)
+  if (!parsed.success) {
+    return {
+      ok: false as const,
+      error: "Enter display name, username, valid email, and a password of at least 8 characters.",
+    }
+  }
 
-  const username = usernameFromName(parsed.data.name)
-  if (!username) return { ok: false as const, error: "Enter a valid student name." }
-
-  const email = loginEmailFromUsername(username)
+  const email = parsed.data.email.toLowerCase()
+  const studentId = parsed.data.studentId?.trim() || null
   const supabase = await createClient()
   const created = await supabase.rpc("conet_create_student", {
     p_email: email,
     p_name: parsed.data.name,
-    p_password: parsed.data.studentId,
-    p_student_id: parsed.data.studentId,
+    p_password: parsed.data.password,
+    p_student_id: studentId,
+    p_username: parsed.data.username,
   })
 
   if (!created.error) {
     revalidateAccounts()
-    return { ok: true as const, pendingConfirm: false, username }
+    return { ok: true as const, pendingConfirm: false, email, username: parsed.data.username }
   }
   if (!missingFunction(created.error)) {
     return { ok: false as const, error: friendly(created.error.message) }
@@ -156,47 +171,46 @@ async function createStudentAccountInternal(name: string, studentId: string) {
 
   const signup = await detachedAuthClient().auth.signUp({
     email,
-    password: parsed.data.studentId,
-    options: { data: { name: parsed.data.name, role: "student" } },
+    password: parsed.data.password,
+    options: {
+      data: { name: parsed.data.name, role: "student", username: parsed.data.username },
+    },
   })
   if (signup.error) return { ok: false as const, error: friendly(signup.error.message) }
 
   const identities = signup.data.user?.identities
   if (signup.data.user && identities && identities.length === 0) {
-    return { ok: false as const, error: "An account with this login already exists." }
+    return { ok: false as const, error: "An account with this email already exists." }
   }
 
   if (signup.data.user?.id) {
     await supabase
       .from("ConetUsers")
-      .update({ student_id: parsed.data.studentId, name: parsed.data.name, email })
+      .update({
+        student_id: studentId,
+        name: parsed.data.name,
+        email,
+        username: parsed.data.username,
+      })
       .eq("auth_id", signup.data.user.id)
   }
 
   revalidateAccounts()
   const pendingConfirm = !signup.data.session && !signup.data.user?.email_confirmed_at
-  return { ok: true as const, pendingConfirm, username }
+  return { ok: true as const, pendingConfirm, email, username: parsed.data.username }
 }
 
-export async function createStudentAccount(name: string, studentId: string) {
+export async function createStudentAccount(input: CreateStudentInput) {
   const session = await teacherContext()
   if (!session.ok) return session
-  return createStudentAccountInternal(name, studentId)
+  return createStudentAccountInternal(input)
 }
 
 export async function importStudentAccounts(rows: ImportStudentRow[]) {
   const session = await teacherContext()
   if (!session.ok) return session
 
-  const parsed = z
-    .array(
-      z.object({
-        name: z.string().trim().min(1).max(80),
-        studentId: z.string().trim().min(1).max(64),
-      })
-    )
-    .max(500)
-    .safeParse(rows)
+  const parsed = z.array(createStudentSchema).max(500).safeParse(rows)
 
   if (!parsed.success) return { ok: false as const, error: "The spreadsheet has no valid rows to import." }
 
@@ -204,12 +218,18 @@ export async function importStudentAccounts(rows: ImportStudentRow[]) {
   let created = 0
 
   for (const row of parsed.data) {
-    const result = await createStudentAccountInternal(row.name, row.studentId)
+    const result = await createStudentAccountInternal({
+      name: row.name,
+      username: row.username,
+      email: row.email,
+      password: row.password,
+      studentId: row.studentId,
+    })
     if (result.ok) {
       created += 1
-      results.push({ name: row.name, studentId: row.studentId, ok: true })
+      results.push({ name: row.name, email: row.email, ok: true })
     } else {
-      results.push({ name: row.name, studentId: row.studentId, ok: false, error: result.error })
+      results.push({ name: row.name, email: row.email, ok: false, error: result.error })
     }
   }
 

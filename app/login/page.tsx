@@ -85,8 +85,6 @@ export default function LoginPage() {
             <p>The University of Hong Kong</p>
             <p className="mt-4 text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Contact</p>
             <ul className="mt-2 space-y-1 text-sm text-slate-600">
-              <li>Mr Yuebo Yang</li>
-              <li>Ms Huilin Zhang</li>
               <li>
                 Professor Shihui Feng{" "}
                 <a
@@ -96,25 +94,34 @@ export default function LoginPage() {
                   shihuife@hku.hk
                 </a>
               </li>
+              <li>
+                Mr. Yuebo Yang{" "}
+                <a
+                  href="mailto:yangyuebo@connect.hku.hk"
+                  className="font-medium text-sky-700 underline decoration-sky-200 underline-offset-2 hover:text-sky-800"
+                >
+                  yangyuebo@connect.hku.hk
+                </a>
+              </li>
             </ul>
           </div>
         </section>
 
         <section className="order-1 flex flex-col justify-center px-8 py-8 sm:px-10 sm:py-10 lg:order-2">
           <h1 className="text-2xl font-bold tracking-tight text-slate-900">Welcome back</h1>
-          <p className="mt-1.5 text-sm text-slate-500">Enter your username and password to continue.</p>
+          <p className="mt-1.5 text-sm text-slate-500">Enter your email and password to continue.</p>
 
           <form onSubmit={onSubmit} className="mt-7 space-y-4">
             <div>
               <label className="mb-1.5 block text-sm font-medium text-slate-700" htmlFor="email">
-                Username
+                Email
               </label>
               <input
                 id="email"
-                type="text"
+                type="email"
                 autoComplete="username"
                 required
-                placeholder="CHANTAIMEN"
+                placeholder="student@school.edu"
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 className={fieldClass}
@@ -146,7 +153,7 @@ export default function LoginPage() {
               <span>
                 <span className="block text-sm font-medium text-slate-800">Remember my login details</span>
                 <span className="mt-0.5 block text-xs leading-relaxed text-slate-500">
-                  Saves your username and password on this device and fills them in the next time you open this page.
+                  Saves your email and password on this device and fills them in the next time you open this page.
                   {remember ? " Saved on this device." : ""}
                 </span>
               </span>
@@ -166,9 +173,8 @@ export default function LoginPage() {
           </form>
 
           <p className="mt-6 rounded-2xl border border-sky-100 bg-sky-50/70 px-4 py-3 text-sm leading-relaxed text-slate-600">
-            Sign in with your name. Your username is your name without spaces, and your password is your student ID. For
-            example, username: <span className="font-semibold text-slate-900">CHANTAIMEN</span>, password:{" "}
-            <span className="font-semibold text-slate-900">2A00</span>.
+            Students and teachers sign in with the email and password your teacher set when creating your account. If you
+            are unsure, ask your teacher for your login details.
           </p>
         </section>
       </div>

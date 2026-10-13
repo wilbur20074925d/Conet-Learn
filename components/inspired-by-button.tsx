@@ -1,6 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
+import { RemyAvatar } from "@/components/remy-avatar"
 
 interface GroupMember {
   id: string
@@ -29,10 +30,11 @@ export default function InspiredByButton({
         type="button"
         variant="outline"
         size="sm"
-        onClick={() => onSelect("NATE")}
-        className="h-6 shrink-0 rounded-full border-neutral-950 bg-neutral-950 px-2 text-[11px] font-semibold text-white hover:bg-neutral-800"
+        onClick={() => onSelect("Remy")}
+        className="h-6 shrink-0 gap-1 rounded-full border-neutral-300 bg-white pl-0.5 pr-2 text-[11px] font-semibold text-neutral-950 hover:bg-neutral-100"
       >
-        NATE
+        <RemyAvatar className="h-5 w-5 ring-0" title="Remy" />
+        Remy
       </Button>
       {groupMembers.map((member) => (
         <Button

@@ -8,6 +8,7 @@ create table if not exists public."ConetUsers" (
   id uuid primary key default gen_random_uuid(),
   auth_id uuid unique references auth.users (id) on delete cascade,
   email text,
+  username text,
   name text not null,
   student_id text,
   role text not null default 'student' check (role in ('teacher', 'student', 'ai')),

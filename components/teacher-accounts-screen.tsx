@@ -68,8 +68,7 @@ export default function TeacherAccountsScreen({
 
   async function onResetPassword(account: ManagedAccount) {
     if (pending || resettingId || deleting) return
-    const label = account.studentId || INITIAL_STUDENT_PASSWORD
-    if (!window.confirm(`Reset ${account.name}'s password to ${label}?`)) return
+    if (!window.confirm(`Reset ${account.name}'s password to ${INITIAL_STUDENT_PASSWORD}?`)) return
     setResettingId(account.id)
     setError("")
     setNotice("")
@@ -79,8 +78,7 @@ export default function TeacherAccountsScreen({
       setError(result.error)
       return
     }
-    const password = account.studentId || result.fallbackPassword
-    setNotice(`${account.name}'s password is ${password} again.`)
+    setNotice(`${account.name}'s password is ${result.fallbackPassword} again. Share it with them securely.`)
   }
 
   function toggleSelected(id: string) {
@@ -160,8 +158,8 @@ export default function TeacherAccountsScreen({
             <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Teacher</p>
             <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">Accounts</h1>
             <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-500">
-              Manage logins for your class. Student usernames are uppercase names without spaces; passwords are their
-              student ID.
+              Create student logins with email and password. Usernames are separate labels for your class roster; students
+              sign in with their email.
             </p>
           </div>
           <StudentImportDialog
@@ -175,7 +173,7 @@ export default function TeacherAccountsScreen({
 
         {setupError && (
           <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">
-            {setupError.includes("student_id")
+            {setupError.includes("student_id") || setupError.includes("username")
               ? "Run the latest supabase/conet-accounts.sql in the Supabase SQL editor, then refresh this page."
               : setupError}
           </p>
@@ -348,7 +346,8 @@ function AccountTable({
                 </th>
               )}
               <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Login</th>
+              <th className="px-4 py-3">Username</th>
+              <th className="px-4 py-3">Email</th>
               {showStudentId && <th className="px-4 py-3">Student ID</th>}
               {showActions && <th className="px-4 py-3 text-right">Actions</th>}
             </tr>
@@ -369,7 +368,8 @@ function AccountTable({
                   </td>
                 )}
                 <td className="px-4 py-3 font-medium text-slate-900">{account.name}</td>
-                <td className="px-4 py-3 font-mono text-xs text-slate-600">{account.loginUsername}</td>
+                <td className="px-4 py-3 font-mono text-xs text-slate-600">{account.username || "—"}</td>
+                <td className="px-4 py-3 font-mono text-xs text-slate-600">{account.email || "—"}</td>
                 {showStudentId && (
                   <td className="px-4 py-3 font-mono text-xs text-slate-600">{account.studentId || "—"}</td>
                 )}

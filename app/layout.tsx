@@ -8,7 +8,7 @@ import "./globals.css"
 
 export const metadata: Metadata = {
   title: "CoNetLearn",
-  description: "A seminar space for collaborative argumentation with NATE.",
+  description: "A seminar space for collaborative argumentation with Remy.",
   icons: {
     icon: logo.src,
     apple: logo.src,

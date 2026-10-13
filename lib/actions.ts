@@ -5,15 +5,16 @@ import { revalidatePath } from "next/cache"
 import { z } from "zod"
 import { createClient } from "./supabase/server"
 import {
+  AGENT_OPENING_MESSAGE,
   NATE_THINKING,
   NATE_USER_ID,
   figureDataUrls,
   mentionsNATE,
   stripFigures,
   normalizeNateMode,
-  requestNateReply,
   type NateMode,
 } from "./nate"
+import { loadAgentContext, requestNateReply } from "./agent-reply"
 import { loadNateSessionMaterials } from "./nate-session-materials"
 
 import { mapMessageRows, type Message, type RawMessage } from "./map-messages"
@@ -174,6 +175,63 @@ export async function getSessionMessages(sessionId: string): Promise<Message[]> 
   return mapMessageRows(data as RawMessage[])
 }
 
+function rpcMissing(error: { message?: string } | null | undefined) {
+  return /does not exist|schema cache|42883/i.test(error?.message || "")
+}
+
+/** Posts Remy's one-time welcome in an empty chat when AI is enabled (modes 1–2). */
+export async function ensureAgentOpeningMessage(
+  groupId: string,
+  sessionId: string
+): Promise<{ posted: boolean }> {
+  const session = await getSessionContext()
+  if (!session.ok) return { posted: false }
+
+  const isTeacher = session.ctx.role === "teacher"
+  const mine = session.ctx.memberships.find((item) => item.groupId === groupId)
+  if (!isTeacher && !mine) return { posted: false }
+
+  const supabase = await createClient()
+  let mode = normalizeNateMode(mine?.newintervene ?? session.ctx.newintervene)
+  if (isTeacher) {
+    const group = await supabase.from("ConetGroups").select("newintervene").eq("id", groupId).maybeSingle()
+    if (group.data) mode = normalizeNateMode(group.data.newintervene)
+  }
+  if (mode === 3) return { posted: false }
+
+  const rpc = await supabase.rpc("conet_ensure_agent_opening", {
+    p_group_id: groupId,
+    p_session_id: sessionId,
+    p_content: AGENT_OPENING_MESSAGE,
+  })
+  if (!rpc.error) return { posted: Boolean(rpc.data) }
+
+  if (!rpcMissing(rpc.error)) {
+    console.error("ensureAgentOpeningMessage rpc failed", rpc.error)
+    return { posted: false }
+  }
+
+  const existing = await supabase
+    .from("ConetMessages")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("user_id", NATE_USER_ID)
+    .like("content", "Hi everyone, I'm%")
+    .limit(1)
+  if (existing.data && existing.data.length > 0) return { posted: false }
+
+  const posted = await supabase.rpc("conet_post_nate_message", {
+    p_group_id: groupId,
+    p_session_id: sessionId,
+    p_content: AGENT_OPENING_MESSAGE,
+  })
+  if (posted.error) {
+    console.error("ensureAgentOpeningMessage fallback failed", posted.error)
+    return { posted: false }
+  }
+  return { posted: true }
+}
+
 const messageSchema = z.object({
   message: z.string().trim().min(1, "Message cannot be empty"),
   groupId: z.string().uuid(),
@@ -307,7 +365,7 @@ export async function finishNateReply(groupId: string, sessionId: string, thinki
       .select("content, user_id, created_at, ConetUsers(name)")
       .eq("session_id", sessionId)
       .order("created_at", { ascending: false })
-      .limit(10),
+      .limit(30),
     loadNateSessionMaterials(supabase, groupId),
   ])
 
@@ -336,12 +394,14 @@ export async function finishNateReply(groupId: string, sessionId: string, thinki
     : asksAboutFigure
       ? [...history].reverse().flatMap((row) => figureDataUrls(row.content))[0]
       : undefined
+  const agentContext = await loadAgentContext(supabase, groupId, materials.text || undefined)
   const reply = await requestNateReply(
     history,
     latestUser?.content || "Please join our discussion.",
     mine.newintervene,
     earlierFigure ? [earlierFigure] : [],
-    materials
+    materials,
+    agentContext
   )
 
   if (!reply) return { success: true }
@@ -360,7 +420,7 @@ export async function finishNateReply(groupId: string, sessionId: string, thinki
       content: reply,
       is_reply: false,
     })
-    if (direct.error) return { error: "NATE could not reply just now." }
+    if (direct.error) return { error: "Remy could not reply just now." }
   }
   revalidatePath("/")
   return { success: true }
@@ -458,26 +518,27 @@ export async function submitFinalDocument(groupId: string, content?: string, par
   if (part === "insights" && !fields.concept2.trim()) return { error: "Write your new insights before submitting." }
   contentToSubmit = withSubmittedPart(contentToSubmit, part)
 
-  const saved = await supabase
-    .from("ConetDocuments")
-    .upsert(
-      {
+  const createdAt = new Date().toISOString()
+  let documentId = existing.data?.id as string | undefined
+  if (!documentId) {
+    const created = await supabase
+      .from("ConetDocuments")
+      .insert({
         group_id: groupId,
         user_id: session.ctx.profileId,
         content: contentToSubmit,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "group_id,user_id" }
-    )
-    .select("id")
-    .single()
-  if (saved.error || !saved.data) return { error: "Failed to submit, please try again." }
+        updated_at: createdAt,
+      })
+      .select("id")
+      .single()
+    if (created.error || !created.data) return { error: "Failed to submit, please try again." }
+    documentId = created.data.id
+  }
 
-  const createdAt = new Date().toISOString()
-  const history = await supabase
+  const historyInsert = supabase
     .from("ConetDocumentHistory")
     .insert({
-      document_id: saved.data.id,
+      document_id: documentId,
       user_id: session.ctx.profileId,
       content: contentToSubmit,
       is_submit: true,
@@ -485,7 +546,14 @@ export async function submitFinalDocument(groupId: string, content?: string, par
     })
     .select("id")
     .single()
-  if (history.error || !history.data) return { error: "Failed to submit, please try again." }
+  const documentUpdate = existing.data?.id
+    ? supabase
+        .from("ConetDocuments")
+        .update({ content: contentToSubmit, updated_at: createdAt })
+        .eq("id", documentId)
+    : Promise.resolve({ error: null })
+  const [history, updated] = await Promise.all([historyInsert, documentUpdate])
+  if (updated.error || history.error || !history.data) return { error: "Failed to submit, please try again." }
 
   const submitted = readNoteFields(contentToSubmit)
   return {
@@ -563,6 +631,7 @@ async function loadSubmittedLocks(
     .eq("document_id", documentId)
     .eq("is_submit", true)
     .order("created_at", { ascending: false })
+    .limit(4)
   if (history.error || !history.data) return locks
   for (const row of history.data) {
     const fields = readNoteFields(row.content as string)
@@ -647,13 +716,13 @@ function withSubmittedPart(raw: string, part: NotePart) {
 export async function updateGroupNewIntervention(groupId: string, newintervene: number) {
   const session = await getSessionContext()
   if (!session.ok) return { success: false, error: session.error }
-  if (session.ctx.role !== "teacher") return { success: false, error: "Only a teacher can change NATE's mode." }
+  if (session.ctx.role !== "teacher") return { success: false, error: "Only a teacher can change the AI mode." }
   const mode = normalizeNateMode(newintervene)
   if (![1, 2, 3].includes(newintervene)) return { success: false, error: "Unknown mode." }
 
   const supabase = await createClient()
   const updated = await supabase.from("ConetGroups").update({ newintervene: mode }).eq("id", groupId)
-  if (updated.error) return { success: false, error: "Failed to update NATE's mode." }
+  if (updated.error) return { success: false, error: "Failed to update the AI mode." }
   revalidatePath("/")
   return { success: true }
 }

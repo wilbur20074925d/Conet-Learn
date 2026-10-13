@@ -94,80 +94,113 @@ export default function ClassDashboard({
                             : "No groups in this session yet."}
                         </p>
                       ) : (
-                        <ul className="grid gap-3 p-3 sm:grid-cols-2 sm:p-4 xl:grid-cols-3">
+                        <ul className="flex flex-col gap-2 border-t border-slate-100 bg-slate-50/40 px-3 py-3 sm:px-4 sm:py-4">
                           {session.groups.map((group) => {
                             const member = role !== "student" || joined.has(group.id)
-                            const shown = group.members.slice(0, 4)
+                            const shown = group.members.slice(0, 5)
                             const extra = group.members.length - shown.length
+                            const isJoined = role === "student" && member
                             return (
                               <li
                                 key={group.id}
-                                className="group/group flex flex-col rounded-2xl border border-slate-200 bg-slate-50/60 p-4 transition duration-200 hover:-translate-y-0.5 hover:border-slate-300 hover:bg-white hover:shadow-md"
+                                className={`group/group relative flex w-full flex-col gap-4 overflow-hidden rounded-xl border bg-white p-4 shadow-sm transition duration-200 hover:border-slate-300 hover:shadow-md sm:flex-row sm:items-center sm:gap-6 sm:p-5 ${
+                                  isJoined
+                                    ? "border-slate-200 ring-1 ring-slate-900/5"
+                                    : "border-slate-200/80"
+                                }`}
                               >
-                                <div className="flex items-center justify-between gap-2">
-                                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Group</p>
-                                  {role === "student" && member && (
-                                    <span className="rounded-full bg-slate-900 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-white">
-                                      Joined
+                                {isJoined && (
+                                  <span
+                                    className="absolute inset-y-3 left-0 w-1 rounded-r-full bg-slate-900"
+                                    aria-hidden
+                                  />
+                                )}
+                                <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
+                                  <div className="flex min-w-0 items-start gap-3 sm:w-52 sm:shrink-0 sm:items-center">
+                                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-600 ring-1 ring-slate-200/80">
+                                      <Users className="h-4 w-4" strokeWidth={2.25} />
                                     </span>
-                                  )}
-                                </div>
-                                <h4 className="mt-1 truncate text-lg font-bold tracking-tight text-slate-900">{group.name}</h4>
-                                {member ? (
-                                  <>
-                                    <p className="mt-1 inline-flex items-center gap-1.5 text-xs font-medium text-slate-500">
-                                      <Users className="h-3.5 w-3.5" />
-                                      {memberLabel(group.members.length)}
-                                    </p>
-                                    {group.members.length > 0 && (
-                                      <div className="mt-3">
-                                        <div className="flex -space-x-2">
+                                    <div className="min-w-0 flex-1">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-400">
+                                          Group
+                                        </p>
+                                        {isJoined && (
+                                          <span className="rounded-md bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.08em] text-emerald-800 ring-1 ring-emerald-200/80">
+                                            Joined
+                                          </span>
+                                        )}
+                                      </div>
+                                      <h4 className="truncate text-base font-bold tracking-tight text-slate-900 sm:text-lg">
+                                        {group.name}
+                                      </h4>
+                                      {member && (
+                                        <p className="mt-0.5 text-xs font-medium text-slate-500">
+                                          {memberLabel(group.members.length)}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  {member ? (
+                                    group.members.length > 0 ? (
+                                      <div className="flex min-w-0 flex-1 items-center gap-3 border-t border-slate-100 pt-3 sm:border-t-0 sm:border-l sm:border-slate-100 sm:pl-6 sm:pt-0">
+                                        <div className="flex shrink-0 -space-x-2.5">
                                           {shown.map((person) => (
                                             <span
                                               key={person.id}
                                               title={person.name}
-                                              className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-slate-200 text-[10px] font-semibold text-slate-700"
+                                              className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-gradient-to-br from-slate-100 to-slate-200 text-[10px] font-semibold text-slate-700 shadow-sm"
                                             >
                                               {initials(person.name)}
                                             </span>
                                           ))}
                                           {extra > 0 && (
-                                            <span className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-white bg-slate-900 text-[10px] font-semibold text-white">
+                                            <span className="flex h-8 w-8 items-center justify-center rounded-full border-2 border-white bg-slate-900 text-[10px] font-semibold text-white shadow-sm">
                                               +{extra}
                                             </span>
                                           )}
                                         </div>
-                                        <p className="mt-2 line-clamp-2 text-sm text-slate-600">
+                                        <p className="min-w-0 truncate text-sm text-slate-600">
                                           {group.members.map((person) => person.name).join(", ")}
                                         </p>
                                       </div>
+                                    ) : (
+                                      <p className="flex-1 text-sm text-slate-500 sm:border-l sm:border-slate-100 sm:pl-6">
+                                        No students in this group yet.
+                                      </p>
+                                    )
+                                  ) : (
+                                    <p className="flex-1 text-sm text-slate-500 sm:border-l sm:border-slate-100 sm:pl-6">
+                                      Your teacher places students in this group.
+                                    </p>
+                                  )}
+                                </div>
+
+                                {member && (
+                                  <div className="shrink-0 sm:w-36">
+                                    {onOpen ? (
+                                      <button
+                                        type="button"
+                                        disabled={openingId === group.id}
+                                        onClick={() => onOpen(group.id, group.chatSessionId)}
+                                        className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition duration-200 hover:bg-slate-800 active:scale-[0.98] disabled:opacity-60"
+                                      >
+                                        {openingId === group.id ? "Opening" : "Open"}
+                                        {openingId !== group.id && (
+                                          <ArrowRight className="h-4 w-4 transition duration-200 group-hover/group:translate-x-0.5" />
+                                        )}
+                                      </button>
+                                    ) : (
+                                      <PendingLink
+                                        href={workspaceHref(role, group.id, group.chatSessionId, "note")}
+                                        className="group/open inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition duration-200 hover:bg-slate-800 active:scale-[0.98]"
+                                      >
+                                        Open
+                                        <ArrowRight className="h-4 w-4 transition duration-200 group-hover/open:translate-x-0.5" />
+                                      </PendingLink>
                                     )}
-                                    <div className="mt-auto pt-4">
-                                      {onOpen ? (
-                                        <button
-                                          type="button"
-                                          disabled={openingId === group.id}
-                                          onClick={() => onOpen(group.id, group.chatSessionId)}
-                                          className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition duration-200 hover:bg-slate-800 active:scale-[0.98] disabled:opacity-60"
-                                        >
-                                          {openingId === group.id ? "Opening" : "Open"}
-                                          {openingId !== group.id && (
-                                            <ArrowRight className="h-4 w-4 transition duration-200 group-hover/group:translate-x-0.5" />
-                                          )}
-                                        </button>
-                                      ) : (
-                                        <PendingLink
-                                          href={workspaceHref(role, group.id, group.chatSessionId, "note")}
-                                          className="group/open inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 text-sm font-semibold text-white shadow-sm transition duration-200 hover:bg-slate-800 active:scale-[0.98]"
-                                        >
-                                          Open
-                                          <ArrowRight className="h-4 w-4 transition duration-200 group-hover/open:translate-x-0.5" />
-                                        </PendingLink>
-                                      )}
-                                    </div>
-                                  </>
-                                ) : (
-                                  <p className="mt-4 text-sm text-slate-500">Your teacher places students in this group.</p>
+                                  </div>
                                 )}
                               </li>
                             )

@@ -6,9 +6,8 @@ import { updateGroupNewIntervention } from "@/lib/actions"
 import { refreshRoute } from "@/lib/refresh-route"
 
 const modes = [
-  { id: 1, label: "Guided", hint: "Trained partner" },
-  { id: 2, label: "Open", hint: "Default model" },
-  { id: 3, label: "Off", hint: "No replies" },
+  { id: 1, label: "Nate", hint: "Socratic help, plus one group-regulation move" },
+  { id: 2, label: "Remy", hint: "Socratic help for the student who asked" },
 ] as const
 
 export default function NateModeSwitch({ groupId, mode }: { groupId: string; mode: number }) {
@@ -36,8 +35,14 @@ export default function NateModeSwitch({ groupId, mode }: { groupId: string; mod
   }
 
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-1.5">
-      <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">NATE</span>
+    <div
+      className="flex items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-1.5"
+      title="Students always see this teammate as Remy"
+    >
+      <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">AI</span>
+      {current !== 1 && current !== 2 && (
+        <span className="text-[11px] font-medium text-slate-500">Off</span>
+      )}
       <div className="flex rounded-full bg-slate-100 p-0.5">
         {modes.map((item) => (
           <button
