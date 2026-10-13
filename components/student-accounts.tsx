@@ -2,15 +2,17 @@
 
 import { FormEvent, useState } from "react"
 import { useRouter } from "next/navigation"
-import { createStudentAccount, resetStudentPassword } from "@/lib/account-actions"
+import { createStudentAccount, deleteStudentAccounts, resetStudentPassword } from "@/lib/account-actions"
 import type { BoardGroup, ClassroomStudent } from "@/lib/classroom"
+import { usernameFromName } from "@/lib/login-identity"
 import { INITIAL_STUDENT_PASSWORD } from "@/lib/student-password"
 
 function groupLabel(groups: BoardGroup[], studentId: string) {
-  for (const group of groups) {
-    if (group.members.some((member) => member.id === studentId && member.role === "student")) return group.name
-  }
-  return "Not in a group yet"
+  const names = groups
+    .filter((group) => group.members.some((member) => member.id === studentId && member.role === "student"))
+    .map((group) => group.name)
+  if (names.length === 0) return "Not in a group yet"
+  return names.join(", ")
 }
 
 export default function StudentAccounts({
@@ -22,9 +24,11 @@ export default function StudentAccounts({
 }) {
   const router = useRouter()
   const [name, setName] = useState("")
-  const [email, setEmail] = useState("")
+  const [studentId, setStudentId] = useState("")
   const [pending, setPending] = useState(false)
   const [resettingId, setResettingId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
 
@@ -34,37 +38,64 @@ export default function StudentAccounts({
     setPending(true)
     setError("")
     setNotice("")
-    const result = await createStudentAccount(name, email)
+    const createdName = name.trim()
+    const createdId = studentId.trim()
+    const result = await createStudentAccount(createdName, createdId)
     setPending(false)
     if (!result.ok) {
       setError(result.error)
       return
     }
-    const createdEmail = email.trim()
-    const createdName = name.trim()
     setName("")
-    setEmail("")
+    setStudentId("")
     setNotice(
       result.pendingConfirm
-        ? `${createdName} was created. Starting password is ${INITIAL_STUDENT_PASSWORD}. They need to open the confirmation email before signing in.`
-        : `${createdName} can sign in with ${createdEmail} and ${INITIAL_STUDENT_PASSWORD}.`
+        ? `${usernameFromName(createdName)} was created. Password: ${createdId}. They need to confirm email before signing in.`
+        : `${result.username} can sign in with password ${createdId}.`
     )
     router.refresh()
   }
 
-  async function onReset(studentId: string, studentName: string) {
-    if (pending || resettingId) return
-    if (!window.confirm(`Reset ${studentName}'s password to ${INITIAL_STUDENT_PASSWORD}?`)) return
-    setResettingId(studentId)
+  function toggleSelected(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  async function onDeleteMany(ids: string[], label: string) {
+    if (pending || resettingId || deleting || ids.length === 0) return
+    if (!window.confirm(`Delete ${label}? They will lose login access and class data tied to those accounts.`)) return
+    setDeleting(true)
     setError("")
     setNotice("")
-    const result = await resetStudentPassword(studentId)
+    const result = await deleteStudentAccounts(ids)
+    setDeleting(false)
+    if (!result.ok) {
+      setError(result.error)
+      return
+    }
+    setSelectedIds(new Set())
+    setNotice(`Deleted ${result.deleted} student account${result.deleted === 1 ? "" : "s"}.`)
+    router.refresh()
+  }
+
+  async function onReset(studentUserId: string, studentName: string, storedId: string | null) {
+    if (pending || resettingId || deleting) return
+    const next = storedId || INITIAL_STUDENT_PASSWORD
+    if (!window.confirm(`Reset ${studentName}'s password to ${next}?`)) return
+    setResettingId(studentUserId)
+    setError("")
+    setNotice("")
+    const result = await resetStudentPassword(studentUserId)
     setResettingId(null)
     if (!result.ok) {
       setError(result.error)
       return
     }
-    setNotice(`${studentName}'s password is ${INITIAL_STUDENT_PASSWORD} again.`)
+    setNotice(`${studentName}'s password is ${storedId || result.fallbackPassword} again.`)
     router.refresh()
   }
 
@@ -74,10 +105,7 @@ export default function StudentAccounts({
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Teacher</p>
         <h1 className="mt-1 text-xl font-bold tracking-tight text-slate-900">Students</h1>
         <p className="mt-1 text-xs leading-relaxed text-slate-500">
-          Create a sign-in for each student. Their starting password is{" "}
-          <span className="rounded-md bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] font-semibold text-slate-700">
-            {INITIAL_STUDENT_PASSWORD}
-          </span>.
+          Username is the name without spaces (uppercase). Password is the student ID.
         </p>
         <form onSubmit={onCreate} className="mt-3 space-y-2">
           <input
@@ -89,16 +117,16 @@ export default function StudentAccounts({
             className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/10"
           />
           <input
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="student@email.com"
-            type="email"
+            value={studentId}
+            onChange={(event) => setStudentId(event.target.value)}
+            placeholder="Student ID"
             autoComplete="off"
+            maxLength={64}
             className="h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/10"
           />
           <button
             type="submit"
-            disabled={pending || !name.trim() || !email.trim()}
+            disabled={pending || !name.trim() || !studentId.trim()}
             className="h-10 w-full rounded-xl bg-slate-900 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50"
           >
             {pending ? "Creating..." : "Create account"}
@@ -113,24 +141,78 @@ export default function StudentAccounts({
       </div>
 
       <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-3">
+        {students.length > 0 && (
+          <div className="flex items-center justify-between gap-2 px-1 pb-1">
+            <label className="flex items-center gap-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={students.every((s) => selectedIds.has(s.id))}
+                disabled={pending || resettingId !== null || deleting}
+                onChange={() => {
+                  const all = students.every((s) => selectedIds.has(s.id))
+                  setSelectedIds(all ? new Set() : new Set(students.map((s) => s.id)))
+                }}
+                className="h-4 w-4 rounded border-slate-300"
+              />
+              Select all
+            </label>
+            {selectedIds.size > 0 && (
+              <button
+                type="button"
+                disabled={pending || resettingId !== null || deleting}
+                onClick={() =>
+                  void onDeleteMany(
+                    [...selectedIds],
+                    `${selectedIds.size} student account${selectedIds.size === 1 ? "" : "s"}`
+                  )
+                }
+                className="text-xs font-semibold text-red-700 hover:text-red-800 disabled:opacity-40"
+              >
+                {deleting ? "Deleting…" : `Delete (${selectedIds.size})`}
+              </button>
+            )}
+          </div>
+        )}
         {students.length === 0 && (
           <p className="px-2 py-8 text-center text-sm text-slate-500">No student accounts yet.</p>
         )}
         {students.map((student) => (
           <section key={student.id} className="rounded-2xl border border-slate-200 px-3 py-3">
+            <div className="flex items-start gap-2">
+              <input
+                type="checkbox"
+                checked={selectedIds.has(student.id)}
+                disabled={pending || resettingId !== null || deleting}
+                onChange={() => toggleSelected(student.id)}
+                className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300"
+                aria-label={`Select ${student.name}`}
+              />
+              <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-slate-900">{student.name}</p>
             <p className="mt-0.5 truncate text-xs text-slate-500" title={student.email || undefined}>
-              {student.email || "No email saved"}
+              {student.email ? usernameFromName(student.name) : "No login saved"}
             </p>
             <p className="mt-1 text-[11px] text-slate-400">{groupLabel(groups, student.id)}</p>
-            <button
-              type="button"
-              disabled={pending || resettingId !== null}
-              onClick={() => onReset(student.id, student.name)}
-              className="mt-2.5 h-8 w-full rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
-            >
-              {resettingId === student.id ? "Resetting..." : "Reset to Password123"}
-            </button>
+            <div className="mt-2.5 flex gap-2">
+              <button
+                type="button"
+                disabled={pending || resettingId !== null || deleting}
+                onClick={() => onReset(student.id, student.name, student.studentId ?? null)}
+                className="h-8 flex-1 rounded-lg border border-slate-200 bg-white text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-40"
+              >
+                {resettingId === student.id ? "Resetting..." : "Reset password"}
+              </button>
+              <button
+                type="button"
+                disabled={pending || resettingId !== null || deleting}
+                onClick={() => void onDeleteMany([student.id], `${student.name}'s account`)}
+                className="h-8 rounded-lg border border-red-200 bg-white px-3 text-xs font-semibold text-red-700 transition hover:bg-red-50 disabled:opacity-40"
+              >
+                Delete
+              </button>
+            </div>
+              </div>
+            </div>
           </section>
         ))}
       </div>

@@ -58,7 +58,7 @@ export default function TeacherBoard({
     if (pending) return
     setConfirm({
       title: `Delete ${groupName}`,
-      description: `Delete “${groupName}”? Students in it will need to join a group again.`,
+      description: `Delete “${groupName}”? Students in it will need to be placed in a group again.`,
       confirmLabel: "Delete",
       onConfirm: () => void runDelete(groupId),
     })
@@ -93,7 +93,7 @@ export default function TeacherBoard({
     if (pending) return
     setConfirm({
       title: `Remove ${studentName}`,
-      description: `Remove ${studentName} from this group? They stay in any other sessions they joined.`,
+      description: `Remove ${studentName} from this group? They can be placed in another group, and they stay in their groups for other classes.`,
       confirmLabel: "Remove",
       onConfirm: () => void runRemove(userId, groupId),
     })
@@ -116,7 +116,7 @@ export default function TeacherBoard({
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Teacher</p>
         <h1 className="mt-1 text-xl font-bold tracking-tight text-slate-900">Groups</h1>
         <p className="mt-1 text-xs leading-relaxed text-slate-500">
-          Create groups, then open each session from the class list above.
+          Create groups, then place each student in one group per class.
         </p>
         <form onSubmit={onCreate} className="mt-3 flex gap-2">
           <input
@@ -188,7 +188,7 @@ export default function TeacherBoard({
       <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
         {waiting.length > 0 && (
           <section className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Waiting to join</p>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Not placed yet</p>
             <ul className="mt-2 space-y-1">
               {waiting.map((student) => (
                 <li key={student.id} className="text-sm font-medium text-slate-700">
@@ -200,7 +200,7 @@ export default function TeacherBoard({
         )}
 
         {groups.length === 0 && (
-          <p className="px-2 py-8 text-center text-sm text-slate-500">Create a group and students can join it.</p>
+          <p className="px-2 py-8 text-center text-sm text-slate-500">Create a group, then place students in it.</p>
         )}
 
         {groups.map((group) => {
@@ -241,7 +241,7 @@ export default function TeacherBoard({
 
               <div className="mt-3">
                 <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Students</p>
-                {students.length === 0 && <p className="mt-1 text-xs text-slate-500">No students have joined.</p>}
+                {students.length === 0 && <p className="mt-1 text-xs text-slate-500">No students in this group yet.</p>}
                 <ul className="mt-2 space-y-2">
                   {students.map((student) => (
                     <li key={student.id} className="rounded-xl bg-slate-50 px-2.5 py-2">

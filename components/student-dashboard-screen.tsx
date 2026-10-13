@@ -3,6 +3,7 @@
 import { useState } from "react"
 import ClassDashboard from "@/components/class-dashboard"
 import ClassroomHeader from "@/components/classroom-header"
+import LoadingScreen from "@/components/loading-screen"
 import ConsentWrapper from "@/components/consent-wrapper"
 import StudentClassroom from "@/components/student-classroom"
 import {
@@ -88,6 +89,9 @@ export default function StudentDashboardScreen({
             onDashboardBack={back}
           />
         </div>
+      )}
+      {openingId && (
+        <LoadingScreen overlay label="Opening" message="Opening the classroom…" />
       )}
       <Dialog open={Boolean(notice)} onOpenChange={(open) => !open && setNotice("")}>
         <DialogContent className="max-w-sm gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">

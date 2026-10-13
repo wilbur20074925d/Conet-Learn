@@ -2,11 +2,10 @@ import { redirect } from "next/navigation"
 import BrandLogo from "@/components/brand-logo"
 import ClassroomHeader from "@/components/classroom-header"
 import ConsentWrapper from "@/components/consent-wrapper"
-import JoinGroup from "@/components/join-group"
+import StudentAwaitingGroup from "@/components/join-group"
 import StudentClassroom from "@/components/student-classroom"
 import { getSessionContext } from "@/lib/actions"
 import { membershipFor } from "@/lib/session-membership"
-import { listJoinableGroups } from "@/lib/classroom"
 import { loadStudentClassroom } from "@/lib/student-classroom-data"
 
 export const dynamic = "force-dynamic"
@@ -52,13 +51,11 @@ export default async function Home({
 
   const active = membershipFor(ctx, isUuid(requestedGroup) ? requestedGroup : null)
   if (!active) {
-    const directory = await listJoinableGroups()
-    if (!directory.ok) return <SetupScreen message={directory.error} />
     return (
       <div className="conet-page-bg flex min-h-dvh flex-col text-slate-900">
         <ConsentWrapper userId={ctx.profileId} />
         <ClassroomHeader name={ctx.name} role="student" />
-        <JoinGroup groups={directory.groups} />
+        <StudentAwaitingGroup />
       </div>
     )
   }

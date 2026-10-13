@@ -1,5 +1,4 @@
 import { ArrowRight, Users } from "lucide-react"
-import { JoinSessionGroup } from "@/components/join-group"
 import PendingLink from "@/components/pending-link"
 import SessionArtwork, { artworkIndexes } from "@/components/session-artwork"
 import SessionMaterialsButton from "@/components/session-materials-button"
@@ -41,8 +40,14 @@ export default function ClassDashboard({
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-8">
       {classes.length === 0 ? (
         <div className="conet-surface px-6 py-10 text-center">
-          <p className="text-lg font-bold tracking-tight text-slate-900">No class yet</p>
-          <p className="mt-2 text-sm text-slate-500">Your teacher needs to create a class before a session can open.</p>
+          <p className="text-lg font-bold tracking-tight text-slate-900">
+            {role === "student" ? "No group yet" : "No class yet"}
+          </p>
+          <p className="mt-2 text-sm text-slate-500">
+            {role === "student"
+              ? "Your teacher places you in one class, then in its sessions and groups."
+              : "Your teacher needs to create a class before a session can open."}
+          </p>
         </div>
       ) : (
         <div className="space-y-8">
@@ -60,7 +65,7 @@ export default function ClassDashboard({
 
               {classroom.sessions.length === 0 ? (
                 <div className="conet-surface mt-4 px-6 py-8 text-center text-sm text-slate-500">
-                  This class has no sessions yet.
+                  {role === "student" ? "Your teacher will place you in a session." : "This class has no sessions yet."}
                 </div>
               ) : (
                 <ol className="mt-4 space-y-5">
@@ -83,7 +88,11 @@ export default function ClassDashboard({
                       </div>
 
                       {session.groups.length === 0 ? (
-                        <p className="px-5 py-6 text-sm text-slate-500">No groups in this session yet.</p>
+                        <p className="px-5 py-6 text-sm text-slate-500">
+                          {role === "student"
+                            ? "Your teacher will place you in a group for this session."
+                            : "No groups in this session yet."}
+                        </p>
                       ) : (
                         <ul className="grid gap-3 p-3 sm:grid-cols-2 sm:p-4 xl:grid-cols-3">
                           {session.groups.map((group) => {
@@ -158,9 +167,7 @@ export default function ClassDashboard({
                                     </div>
                                   </>
                                 ) : (
-                                  <div className="mt-auto">
-                                    <JoinSessionGroup groupId={group.id} />
-                                  </div>
+                                  <p className="mt-4 text-sm text-slate-500">Your teacher places students in this group.</p>
                                 )}
                               </li>
                             )

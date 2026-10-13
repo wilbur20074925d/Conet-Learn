@@ -1,12 +1,13 @@
 "use server"
 
 import { redirect } from "next/navigation"
+import { loginEmailFromIdentifier } from "./login-identity"
 import { createClient } from "./supabase/server"
 
 export async function signIn(email: string, password: string) {
   const supabase = await createClient()
   const { error } = await supabase.auth.signInWithPassword({
-    email: email.trim(),
+    email: loginEmailFromIdentifier(email),
     password,
   })
 
@@ -15,7 +16,7 @@ export async function signIn(email: string, password: string) {
     return {
       error: message.includes("confirm")
         ? "This email still needs to be confirmed before it can sign in."
-        : "Wrong email or password. Please try again.",
+        : "Wrong username or password. Please try again.",
     }
   }
 

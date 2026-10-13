@@ -1,6 +1,6 @@
 "use client"
 
-import { FormEvent, useEffect, useRef, useState } from "react"
+import { FormEvent, useEffect, useRef, useState, type ReactNode } from "react"
 import { useRouter } from "next/navigation"
 import { ArrowRight, Copy, Pencil, Plus, Trash2 } from "lucide-react"
 import NateModeSwitch from "@/components/nate-mode-switch"
@@ -23,12 +23,17 @@ import {
   duplicateClassSession,
   deleteClassSession,
   placeGroupInSession,
+  placeStudentsInClass,
+  placeStudentsInGroup,
+  placeStudentsInSession,
+  removeStudentFromClass,
+  removeStudentFromSession,
   renameClass,
   renameClassSession,
   renameGroup,
 } from "@/lib/class-actions"
-import { deleteGroup, moveStudent, removeStudent } from "@/lib/classroom-actions"
-import type { CatalogClass, CatalogGroup, CatalogSession } from "@/lib/catalog"
+import { deleteGroup, removeStudent } from "@/lib/classroom-actions"
+import type { CatalogClass, CatalogGroup, CatalogSession, CatalogStudent } from "@/lib/catalog"
 
 type Board = {
   classes: CatalogClass[]
@@ -46,7 +51,16 @@ type BoardUpdate =
   | { type: "add-group"; sessionId: string; group: CatalogGroup }
   | { type: "rename-group"; id: string; name: string }
   | { type: "delete-group"; id: string }
+  | { type: "add-class-students"; classId: string; students: CatalogStudent[] }
+  | { type: "add-session-students"; sessionId: string; students: CatalogStudent[] }
+  | { type: "add-group-students"; sessionId: string; groupId: string; students: CatalogStudent[] }
+  | { type: "remove-class-student"; classId: string; userId: string }
+  | { type: "remove-class-students"; classId: string; userIds: string[] }
+  | { type: "remove-session-student"; sessionId: string; userId: string }
+  | { type: "remove-session-students"; sessionId: string; userIds: string[] }
+  | { type: "remove-group-students"; groupId: string; userIds: string[] }
   | { type: "remove-member"; groupId: string; userId: string }
+  | { type: "add-member"; groupId: string; member: { id: string; name: string; role: string } }
   | { type: "move-member"; fromGroupId: string; toGroupId: string; userId: string }
   | { type: "place-group"; groupId: string; sessionId: string }
 
@@ -64,6 +78,55 @@ function mapGroups(board: Board, groupId: string, change: (group: CatalogGroup) 
       })),
     })),
     looseGroups: board.looseGroups.map((group) => (group.id === groupId ? change(group) : group)),
+  }
+}
+
+function mergeStudents<T extends { id: string; name: string }>(current: T[], incoming: T[]) {
+  const seen = new Set(current.map((student) => student.id))
+  return [...current, ...incoming.filter((student) => !seen.has(student.id))].sort((a, b) =>
+    a.name.localeCompare(b.name)
+  )
+}
+
+function placeMember(board: Board, groupId: string, member: { id: string; name: string; role: string }): Board {
+  const inClass = board.classes.some((classroom) =>
+    classroom.sessions.some((session) => session.groups.some((group) => group.id === groupId))
+  )
+  if (inClass) {
+    return {
+      ...board,
+      classes: board.classes.map((classroom) => {
+        const ownsGroup = classroom.sessions.some((session) => session.groups.some((group) => group.id === groupId))
+        if (!ownsGroup) return classroom
+        return {
+          ...classroom,
+          sessions: classroom.sessions.map((session) => ({
+            ...session,
+            groups: session.groups.map((group) => ({
+              ...group,
+              members:
+                group.id === groupId
+                  ? group.members.some((item) => item.id === member.id)
+                    ? group.members
+                    : [...group.members, member]
+                  : group.members.filter((item) => item.id !== member.id),
+            })),
+          })),
+        }
+      }),
+    }
+  }
+  return {
+    ...board,
+    looseGroups: board.looseGroups.map((group) => ({
+      ...group,
+      members:
+        group.id === groupId
+          ? group.members.some((item) => item.id === member.id)
+            ? group.members
+            : [...group.members, member]
+          : group.members.filter((item) => item.id !== member.id),
+    })),
   }
 }
 
@@ -141,11 +204,109 @@ function updateBoard(board: Board, update: BoardUpdate): Board {
         })),
         looseGroups: board.looseGroups.filter((group) => group.id !== update.id),
       }
+    case "add-class-students":
+      return {
+        ...board,
+        classes: board.classes.map((classroom) =>
+          classroom.id === update.classId
+            ? { ...classroom, students: mergeStudents(classroom.students, update.students) }
+            : classroom
+        ),
+      }
+    case "add-session-students":
+      return {
+        ...board,
+        classes: board.classes.map((classroom) => ({
+          ...classroom,
+          sessions: classroom.sessions.map((session) =>
+            session.id === update.sessionId
+              ? { ...session, students: mergeStudents(session.students, update.students) }
+              : session
+          ),
+        })),
+      }
+    case "add-group-students": {
+      const incoming = new Set(update.students.map((student) => student.id))
+      const members = update.students.map((student) => ({ ...student, role: "student" }))
+      return {
+        ...board,
+        classes: board.classes.map((classroom) => ({
+          ...classroom,
+          sessions: classroom.sessions.map((session) => {
+            if (session.id !== update.sessionId) return session
+            return {
+              ...session,
+              groups: session.groups.map((group) => ({
+                ...group,
+                members:
+                  group.id === update.groupId
+                    ? mergeStudents(group.members, members)
+                    : group.members.filter((member) => !incoming.has(member.id)),
+              })),
+            }
+          }),
+        })),
+      }
+    }
+    case "remove-class-student":
+      return {
+        ...board,
+        classes: board.classes.map((classroom) => {
+          if (classroom.id !== update.classId) return classroom
+          return {
+            ...classroom,
+            students: classroom.students.filter((student) => student.id !== update.userId),
+            sessions: classroom.sessions.map((session) => ({
+              ...session,
+              students: session.students.filter((student) => student.id !== update.userId),
+              groups: session.groups.map((group) => ({
+                ...group,
+                members: group.members.filter((member) => member.id !== update.userId),
+              })),
+            })),
+          }
+        }),
+      }
+    case "remove-class-students":
+      return update.userIds.reduce(
+        (next, userId) => updateBoard(next, { type: "remove-class-student", classId: update.classId, userId }),
+        board
+      )
+    case "remove-session-student":
+      return {
+        ...board,
+        classes: board.classes.map((classroom) => ({
+          ...classroom,
+          sessions: classroom.sessions.map((session) => {
+            if (session.id !== update.sessionId) return session
+            return {
+              ...session,
+              students: session.students.filter((student) => student.id !== update.userId),
+              groups: session.groups.map((group) => ({
+                ...group,
+                members: group.members.filter((member) => member.id !== update.userId),
+              })),
+            }
+          }),
+        })),
+      }
+    case "remove-session-students":
+      return update.userIds.reduce(
+        (next, userId) => updateBoard(next, { type: "remove-session-student", sessionId: update.sessionId, userId }),
+        board
+      )
+    case "remove-group-students":
+      return mapGroups(board, update.groupId, (group) => ({
+        ...group,
+        members: group.members.filter((member) => !update.userIds.includes(member.id)),
+      }))
     case "remove-member":
       return mapGroups(board, update.groupId, (group) => ({
         ...group,
         members: group.members.filter((member) => member.id !== update.userId),
       }))
+    case "add-member":
+      return placeMember(board, update.groupId, update.member)
     case "move-member": {
       const source = findGroup(board, update.fromGroupId)
       const member = source?.members.find((item) => item.id === update.userId)
@@ -154,10 +315,7 @@ function updateBoard(board: Board, update: BoardUpdate): Board {
         ...group,
         members: group.members.filter((item) => item.id !== update.userId),
       }))
-      return mapGroups(removed, update.toGroupId, (group) => ({
-        ...group,
-        members: [...group.members, member],
-      }))
+      return placeMember(removed, update.toGroupId, member)
     }
     case "place-group": {
       const group = board.looseGroups.find((item) => item.id === update.groupId)
@@ -195,6 +353,7 @@ function copySession(session: CatalogSession, classId: string, title: string): C
     classId,
     title,
     createdAt: new Date().toISOString(),
+    students: [],
     groups: session.groups.map((group) => blankGroup(group.name, id)),
   }
 }
@@ -366,21 +525,25 @@ function NameEditor({ value, onSave }: { value: string; onSave: (next: string) =
   )
 }
 
+function notYetPlaced(students: CatalogStudent[], placed: { id: string }[]) {
+  const ids = new Set(placed.map((student) => student.id))
+  return students.filter((student) => !ids.has(student.id))
+}
+
 export default function TeacherClassBoard({
   classes,
   looseGroups,
-  waiting,
+  students,
   onOpen,
   openingId = null,
 }: {
   classes: CatalogClass[]
   looseGroups: CatalogGroup[]
-  waiting: { id: string; name: string }[]
+  students: { id: string; name: string }[]
   onOpen?: (groupId: string, chatSessionId: string | null) => void
   openingId?: string | null
 }) {
   const router = useRouter()
-  const [moves, setMoves] = useState<Record<string, string>>({})
   const [placements, setPlacements] = useState<Record<string, string>>({})
   const [notice, setNotice] = useState("")
   const [confirm, setConfirm] = useState<{
@@ -398,10 +561,6 @@ export default function TeacherClassBoard({
     if (generation.current === 0) setBoard({ classes, looseGroups })
   }, [classes, looseGroups])
 
-  const allGroups = [
-    ...board.classes.flatMap((item) => item.sessions.flatMap((session) => session.groups)),
-    ...board.looseGroups,
-  ]
   const allSessions = board.classes.flatMap((item) => item.sessions)
   const art = artworkIndexes(board.classes)
 
@@ -450,7 +609,7 @@ export default function TeacherClassBoard({
           <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Dashboard</p>
           <h1 className="mt-1 text-3xl font-bold tracking-tight text-slate-900">Classes</h1>
           <p className="mt-2 text-sm leading-relaxed text-slate-500">
-            Create a class, add sessions inside it, then add groups inside each session. Duplicate a class or session to copy its groups and materials. Students join each copy themselves.
+            Place each student in one class. Inside that class, place them in one or more sessions, then in one group for each session.
           </p>
         </div>
         <CreateDialog
@@ -462,20 +621,13 @@ export default function TeacherClassBoard({
             perform(
               {
                 type: "add-class",
-                classroom: { id: tempId(), name, createdAt: new Date().toISOString(), sessions: [] },
+                classroom: { id: tempId(), name, createdAt: new Date().toISOString(), students: [], sessions: [] },
               },
               () => createClass(name)
             )
           }
         />
       </div>
-
-      {waiting.length > 0 && (
-        <section className="mt-6 rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-3">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Waiting to join</p>
-          <p className="mt-1 text-sm text-slate-600">{waiting.map((student) => student.name).join(", ")}</p>
-        </section>
-      )}
 
       {board.classes.length === 0 && board.looseGroups.length === 0 && (
         <div className="conet-surface mt-6 px-6 py-10 text-center">
@@ -500,6 +652,36 @@ export default function TeacherClassBoard({
                   />
                 </h2>
               </div>
+              <ManageStudentsDialog
+                title={`Manage students in ${classroom.name}`}
+                description="Add students into this class, or move students out. A student can belong to only one class. Moving a student out also removes them from its sessions and groups."
+                available={notYetPlaced(
+                  students,
+                  board.classes.flatMap((item) => item.students)
+                )}
+                enrolled={classroom.students}
+                onAdd={(chosen) => {
+                  if (stillSaving(classroom.id) || chosen.length === 0) return
+                  perform(
+                    { type: "add-class-students", classId: classroom.id, students: chosen },
+                    () => placeStudentsInClass(classroom.id, chosen.map((student) => student.id))
+                  )
+                }}
+                onMoveOut={(chosen) => {
+                  if (stillSaving(classroom.id) || chosen.length === 0) return
+                  const ids = chosen.map((student) => student.id)
+                  perform(
+                    { type: "remove-class-students", classId: classroom.id, userIds: ids },
+                    async () => {
+                      for (const id of ids) {
+                        const result = await removeStudentFromClass(classroom.id, id)
+                        if (!result.ok) return result
+                      }
+                      return { ok: true as const }
+                    }
+                  )
+                }}
+              />
               <CreateDialog
                 label="Create session"
                 title="Create session"
@@ -516,6 +698,7 @@ export default function TeacherClassBoard({
                         classId: classroom.id,
                         title,
                         createdAt: new Date().toISOString(),
+                        students: [],
                         groups: [],
                       },
                     },
@@ -526,7 +709,7 @@ export default function TeacherClassBoard({
               <CreateDialog
                 label="Duplicate"
                 title="Duplicate class"
-                description={`Copies the sessions, groups, and materials in ${classroom.name}. Students and chat stay in the original.`}
+                description={`Copies the sessions, groups, and materials in ${classroom.name}. Students and chat stay in the original. Place students in the copy yourself.`}
                 placeholder="Class name"
                 initialValue={`Copy of ${classroom.name}`.slice(0, 80)}
                 submitLabel="Duplicate"
@@ -542,6 +725,7 @@ export default function TeacherClassBoard({
                         id,
                         name,
                         createdAt: new Date().toISOString(),
+                        students: [],
                         sessions: classroom.sessions.map((session) => copySession(session, id, session.title)),
                       },
                     },
@@ -565,6 +749,7 @@ export default function TeacherClassBoard({
             </div>
 
             <div className="space-y-4 p-4 sm:p-5">
+              <StudentRoster students={classroom.students} empty="No students in this class yet." />
               {classroom.sessions.length === 0 && (
                 <p className="text-sm text-slate-500">Add a session to this class, then add groups inside it.</p>
               )}
@@ -597,6 +782,33 @@ export default function TeacherClassBoard({
                         </h3>
                       </div>
                       <SessionMaterialsButton role="teacher" sessionId={session.id} compact />
+                      <ManageStudentsDialog
+                        title={`Manage students in ${session.title}`}
+                        description={`Add students from ${classroom.name}, or move them out of this session. A student can be in more than one session of their class.`}
+                        available={notYetPlaced(classroom.students, session.students)}
+                        enrolled={session.students}
+                        onAdd={(chosen) => {
+                          if (stillSaving(session.id) || chosen.length === 0) return
+                          perform(
+                            { type: "add-session-students", sessionId: session.id, students: chosen },
+                            () => placeStudentsInSession(session.id, chosen.map((student) => student.id))
+                          )
+                        }}
+                        onMoveOut={(chosen) => {
+                          if (stillSaving(session.id) || chosen.length === 0) return
+                          const ids = chosen.map((student) => student.id)
+                          perform(
+                            { type: "remove-session-students", sessionId: session.id, userIds: ids },
+                            async () => {
+                              for (const id of ids) {
+                                const result = await removeStudentFromSession(session.id, id)
+                                if (!result.ok) return result
+                              }
+                              return { ok: true as const }
+                            }
+                          )
+                        }}
+                      />
                       <CreateDialog
                         label="Create group"
                         title="Create group"
@@ -613,7 +825,7 @@ export default function TeacherClassBoard({
                       <CreateDialog
                         label="Duplicate"
                         title="Duplicate session"
-                        description={`Copies the groups and materials in ${session.title} into ${classroom.name}. Students and chat stay in the original.`}
+                        description={`Copies the groups and materials in ${session.title} into ${classroom.name}. Students and chat stay in the original. Place students in the copy yourself.`}
                         placeholder="Session name"
                         initialValue={`Copy of ${session.title}`.slice(0, 80)}
                         submitLabel="Duplicate"
@@ -646,6 +858,10 @@ export default function TeacherClassBoard({
                       </button>
                     </div>
 
+                    <div className="mt-3">
+                      <StudentRoster students={session.students} empty="No students in this session yet." />
+                    </div>
+
                     {session.groups.length === 0 ? (
                       <p className="mt-3 text-sm text-slate-500">No groups in this session yet.</p>
                     ) : (
@@ -654,36 +870,23 @@ export default function TeacherClassBoard({
                           <GroupCard
                             key={group.id}
                             group={group}
-                            others={allGroups.filter((item) => item.id !== group.id)}
                             onRename={(next) => {
                               if (stillSaving(group.id)) return
                               perform({ type: "rename-group", id: group.id, name: next }, () => renameGroup(group.id, next))
                             }}
                             onDelete={() => {
                               if (stillSaving(group.id)) return
-                              askConfirm(`Delete ${group.name}`, `Delete “${group.name}”? Students in it will need to join a group again.`, () =>
+                              askConfirm(`Delete ${group.name}`, `Delete “${group.name}”? Students in it will need to be placed in a group again.`, () =>
                                 perform({ type: "delete-group", id: group.id }, () => deleteGroup(group.id))
                               )
                             }}
-                            onMove={(userId) => {
-                              const target = moves[`${group.id}:${userId}`]
-                              if (!target || stillSaving(group.id) || stillSaving(target)) return
-                              perform(
-                                { type: "move-member", fromGroupId: group.id, toGroupId: target, userId },
-                                () => moveStudent(userId, target, group.id)
-                              )
-                            }}
-                            onMoveChange={(userId, value) =>
-                              setMoves((current) => ({ ...current, [`${group.id}:${userId}`]: value }))
-                            }
-                            moveValue={(userId) => moves[`${group.id}:${userId}`] || ""}
                             onOpen={onOpen}
                             opening={openingId === group.id}
                             onRemove={(userId, studentName) => {
                               if (stillSaving(group.id)) return
                               askConfirm(
                                 `Remove ${studentName}`,
-                                `Remove ${studentName} from ${group.name}? They stay in any other sessions they joined.`,
+                                `Remove ${studentName} from ${group.name}? They stay in this session and can be placed in another group.`,
                                 () =>
                                   perform(
                                     { type: "remove-member", groupId: group.id, userId },
@@ -692,6 +895,46 @@ export default function TeacherClassBoard({
                                 "Remove"
                               )
                             }}
+                            place={
+                              <ManageStudentsDialog
+                                title={`Manage students in ${group.name}`}
+                                description="Add students from this session, or move them out of this group. Each student can be in one group for this session."
+                                available={session.students
+                                  .filter((student) => !group.members.some((member) => member.id === student.id))
+                                  .map((student) => {
+                                    const current = session.groups.find(
+                                      (item) => item.id !== group.id && item.members.some((member) => member.id === student.id)
+                                    )
+                                    return current ? { ...student, name: `${student.name} (in ${current.name})` } : student
+                                  })}
+                                enrolled={group.members.map((member) => ({ id: member.id, name: member.name }))}
+                                onAdd={(chosen) => {
+                                  if (stillSaving(group.id) || chosen.length === 0) return
+                                  const clean = chosen.map((student) => {
+                                    const source = session.students.find((item) => item.id === student.id)
+                                    return { id: student.id, name: source?.name || student.name }
+                                  })
+                                  perform(
+                                    { type: "add-group-students", sessionId: session.id, groupId: group.id, students: clean },
+                                    () => placeStudentsInGroup(group.id, clean.map((student) => student.id))
+                                  )
+                                }}
+                                onMoveOut={(chosen) => {
+                                  if (stillSaving(group.id) || chosen.length === 0) return
+                                  const ids = chosen.map((student) => student.id)
+                                  perform(
+                                    { type: "remove-group-students", groupId: group.id, userIds: ids },
+                                    async () => {
+                                      for (const id of ids) {
+                                        const result = await removeStudent(id, group.id)
+                                        if (!result.ok) return result
+                                      }
+                                      return { ok: true as const }
+                                    }
+                                  )
+                                }}
+                              />
+                            }
                           />
                         ))}
                       </ul>
@@ -801,28 +1044,190 @@ export default function TeacherClassBoard({
   )
 }
 
+function StudentRoster({ students, empty }: { students: CatalogStudent[]; empty: string }) {
+  if (students.length === 0) return <p className="text-sm text-slate-500">{empty}</p>
+  return (
+    <ul className="flex flex-wrap gap-2">
+      {students.map((student) => (
+        <li key={student.id} className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-800">
+          {student.name}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function ManageStudentsDialog({
+  title,
+  description,
+  available,
+  enrolled,
+  onAdd,
+  onMoveOut,
+}: {
+  title: string
+  description: string
+  available: CatalogStudent[]
+  enrolled: CatalogStudent[]
+  onAdd: (students: CatalogStudent[]) => void
+  onMoveOut: (students: CatalogStudent[]) => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [adding, setAdding] = useState<string[]>([])
+  const [removing, setRemoving] = useState<string[]>([])
+
+  function openDialog() {
+    setAdding([])
+    setRemoving([])
+    setOpen(true)
+  }
+
+  function toggle(list: string[], id: string, setList: (next: string[]) => void) {
+    setList(list.includes(id) ? list.filter((item) => item !== id) : [...list, id])
+  }
+
+  function chosen(students: CatalogStudent[], ids: string[]) {
+    return students.filter((student) => ids.includes(student.id))
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={openDialog}
+        className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 transition hover:bg-slate-50"
+      >
+        Manage students
+      </button>
+      <Dialog open={open} onOpenChange={(next) => (next ? openDialog() : setOpen(false))}>
+        <DialogContent className="max-w-sm gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">
+          <div className="border-b border-slate-100 px-5 pb-4 pt-5 pr-12">
+            <DialogHeader className="space-y-1 text-left">
+              <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">{title}</DialogTitle>
+              <DialogDescription className="text-sm leading-6 text-slate-500">{description}</DialogDescription>
+            </DialogHeader>
+          </div>
+          <div className="max-h-[70vh] space-y-5 overflow-y-auto px-5 py-4">
+            <StudentPicker
+              label="Move out"
+              hint="Students already here"
+              students={enrolled}
+              empty="No students to move out."
+              selected={removing}
+              onToggle={(id) => toggle(removing, id, setRemoving)}
+              onSelectAll={() => setRemoving(removing.length === enrolled.length ? [] : enrolled.map((student) => student.id))}
+              actionLabel="Move out"
+              onAction={() => {
+                const next = chosen(enrolled, removing)
+                setOpen(false)
+                onMoveOut(next)
+              }}
+            />
+            <StudentPicker
+              label="Add in"
+              hint="Students you can add"
+              students={available}
+              empty="No students to add."
+              selected={adding}
+              onToggle={(id) => toggle(adding, id, setAdding)}
+              onSelectAll={() => setAdding(adding.length === available.length ? [] : available.map((student) => student.id))}
+              actionLabel="Add in"
+              onAction={() => {
+                const next = chosen(available, adding)
+                setOpen(false)
+                onAdd(next)
+              }}
+            />
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  )
+}
+
+function StudentPicker({
+  label,
+  hint,
+  students,
+  empty,
+  selected,
+  onToggle,
+  onSelectAll,
+  actionLabel,
+  onAction,
+}: {
+  label: string
+  hint: string
+  students: CatalogStudent[]
+  empty: string
+  selected: string[]
+  onToggle: (id: string) => void
+  onSelectAll: () => void
+  actionLabel: string
+  onAction: () => void
+}) {
+  const allSelected = students.length > 0 && selected.length === students.length
+  return (
+    <section>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</p>
+      <p className="mt-1 text-sm text-slate-500">{hint}</p>
+      {students.length === 0 ? (
+        <p className="mt-2 text-sm text-slate-500">{empty}</p>
+      ) : (
+        <>
+          <label className="mt-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
+            <input type="checkbox" checked={allSelected} onChange={onSelectAll} className="h-4 w-4 rounded border-slate-300" />
+            Select all
+          </label>
+          <ul className="mt-2 max-h-36 space-y-1 overflow-y-auto">
+            {students.map((student) => (
+              <li key={student.id}>
+                <label className="flex items-center gap-2 rounded-xl px-2 py-1.5 text-sm text-slate-800 hover:bg-slate-50">
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(student.id)}
+                    onChange={() => onToggle(student.id)}
+                    className="h-4 w-4 rounded border-slate-300"
+                  />
+                  <span className="min-w-0 truncate">{student.name}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-3 flex justify-end">
+            <button
+              type="button"
+              disabled={selected.length === 0}
+              onClick={onAction}
+              className={`h-9 rounded-xl px-3.5 text-sm font-semibold text-white disabled:opacity-50 ${
+                actionLabel === "Move out" ? "bg-red-600 hover:bg-red-700" : "bg-slate-900 hover:bg-slate-800"
+              }`}
+            >
+              {actionLabel}
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  )
+}
+
 function GroupCard({
   group,
-  others,
   onRename,
   onDelete,
-  onMove,
-  onMoveChange,
-  moveValue,
   onRemove,
   onOpen,
   opening = false,
+  place,
 }: {
   group: CatalogGroup
-  others: CatalogGroup[]
   onRename: (next: string) => void
   onDelete: () => void
-  onMove: (userId: string) => void
-  onMoveChange: (userId: string, value: string) => void
-  moveValue: (userId: string) => string
   onRemove: (userId: string, name: string) => void
   onOpen?: (groupId: string, chatSessionId: string | null) => void
   opening?: boolean
+  place?: ReactNode
 }) {
   return (
     <li className="rounded-2xl border border-slate-200 bg-white p-4 transition duration-200 hover:border-slate-300 hover:shadow-sm">
@@ -837,6 +1242,7 @@ function GroupCard({
           <Trash2 className="h-4 w-4" />
         </button>
       </div>
+      {place && <div className="mt-3">{place}</div>}
       <div className="mt-2 overflow-x-auto">
         <NateModeSwitch groupId={group.id} mode={group.newintervene} />
       </div>
@@ -862,40 +1268,16 @@ function GroupCard({
       )}
       <div className="mt-3">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Students</p>
-        {group.members.length === 0 && <p className="mt-1 text-xs text-slate-500">No students have joined.</p>}
+        {group.members.length === 0 && <p className="mt-1 text-xs text-slate-500">No students in this group yet.</p>}
         <ul className="mt-2 space-y-2">
           {group.members.map((student) => (
             <li key={student.id} className="rounded-xl bg-slate-50 px-2.5 py-2">
-              <p className="text-sm font-semibold text-slate-800">{student.name}</p>
-              <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                {others.length > 0 && (
-                  <>
-                    <select
-                      value={moveValue(student.id)}
-                      onChange={(event) => onMoveChange(student.id, event.target.value)}
-                      className="h-8 min-w-0 flex-1 rounded-lg border border-slate-200 bg-white px-2 text-xs"
-                    >
-                      <option value="">Move to...</option>
-                      {others.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {option.name}
-                        </option>
-                      ))}
-                    </select>
-                    <button
-                      type="button"
-                      disabled={!moveValue(student.id)}
-                      onClick={() => onMove(student.id)}
-                      className="h-8 rounded-lg bg-slate-900 px-2.5 text-xs font-semibold text-white disabled:opacity-40"
-                    >
-                      Move
-                    </button>
-                  </>
-                )}
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold text-slate-800">{student.name}</p>
                 <button
                   type="button"
                   onClick={() => onRemove(student.id, student.name)}
-                  className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100 disabled:opacity-40"
+                  className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
                 >
                   Remove
                 </button>

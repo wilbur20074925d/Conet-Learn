@@ -13,16 +13,22 @@ function missingCatalog(error: { code?: string; message?: string } | null) {
     error.code === "PGRST205" ||
     error.code === "42P01" ||
     error.code === "42703" ||
-    /ConetClasses|ConetClassSessions|class_session_id|schema cache|does not exist/i.test(message)
+    /ConetClasses|ConetClassSessions|ConetClassMembers|ConetSessionMembers|class_session_id|schema cache|does not exist/i.test(message)
   )
 }
 
 export async function getClassCatalog(): Promise<
-  | { ok: true; classes: CatalogClass[]; looseGroups: CatalogGroup[]; waiting: { id: string; name: string }[] }
+  | {
+      ok: true
+      classes: CatalogClass[]
+      looseGroups: CatalogGroup[]
+      waiting: { id: string; name: string }[]
+      students: { id: string; name: string }[]
+    }
   | { ok: false; error: string; needsSetup?: boolean }
 > {
   const supabase = await createClient()
-  const [board, classesQuery, sessionsQuery, linksQuery] = await Promise.all([
+  const [board, classesQuery, sessionsQuery, linksQuery, classMembersQuery, sessionMembersQuery] = await Promise.all([
     getTeacherBoard(),
     supabase.from("ConetClasses").select("id, name, created_at").order("created_at", { ascending: true }),
     supabase
@@ -30,10 +36,17 @@ export async function getClassCatalog(): Promise<
       .select("id, class_id, title, created_at")
       .order("created_at", { ascending: true }),
     supabase.from("ConetGroups").select("id, class_session_id"),
+    supabase.from("ConetClassMembers").select("class_id, user_id"),
+    supabase.from("ConetSessionMembers").select("class_session_id, user_id"),
   ])
   if (!board.ok) return board
 
-  const error = classesQuery.error || sessionsQuery.error || linksQuery.error
+  const error =
+    classesQuery.error ||
+    sessionsQuery.error ||
+    linksQuery.error ||
+    classMembersQuery.error ||
+    sessionMembersQuery.error
   if (error) {
     if (missingCatalog(error)) {
       return {
@@ -60,10 +73,32 @@ export async function getClassCatalog(): Promise<
   }))
   const byId = new Map(groups.map((group) => [group.id, group]))
 
+  const nameOf = new Map(board.students.map((student) => [student.id, student.name]))
+  function roster(ids: string[]) {
+    return ids
+      .map((id) => ({ id, name: nameOf.get(id) || "Student" }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+  }
+  const classStudentIds = new Map<string, string[]>()
+  for (const row of classMembersQuery.data || []) {
+    const classId = row.class_id as string
+    const list = classStudentIds.get(classId) || []
+    list.push(row.user_id as string)
+    classStudentIds.set(classId, list)
+  }
+  const sessionStudentIds = new Map<string, string[]>()
+  for (const row of sessionMembersQuery.data || []) {
+    const sessionId = row.class_session_id as string
+    const list = sessionStudentIds.get(sessionId) || []
+    list.push(row.user_id as string)
+    sessionStudentIds.set(sessionId, list)
+  }
+
   const classes: CatalogClass[] = (classesQuery.data || []).map((row) => ({
     id: row.id as string,
     name: row.name as string,
     createdAt: row.created_at as string,
+    students: roster(classStudentIds.get(row.id as string) || []),
     sessions: [],
   }))
   const classById = new Map(classes.map((item) => [item.id, item]))
@@ -76,6 +111,7 @@ export async function getClassCatalog(): Promise<
       classId: row.class_id as string,
       title: row.title as string,
       createdAt: row.created_at as string,
+      students: roster(sessionStudentIds.get(row.id as string) || []),
       groups: [],
     })
   }
@@ -103,5 +139,11 @@ export async function getClassCatalog(): Promise<
     })
   }
 
-  return { ok: true, classes, looseGroups, waiting: board.waiting }
+  return {
+    ok: true,
+    classes,
+    looseGroups,
+    waiting: board.waiting,
+    students: board.students.map((student) => ({ id: student.id, name: student.name })),
+  }
 }

@@ -3,11 +3,16 @@ import { GeistSans } from "geist/font/sans"
 import { GeistMono } from "geist/font/mono"
 import { Analytics } from "@vercel/analytics/next"
 import AppUpdateWatcher from "@/components/app-update-watcher"
+import logo from "@/components/figure/conet-learn.png"
 import "./globals.css"
 
 export const metadata: Metadata = {
   title: "CoNetLearn",
   description: "A seminar space for collaborative argumentation with NATE.",
+  icons: {
+    icon: logo.src,
+    apple: logo.src,
+  },
 }
 
 export default function RootLayout({

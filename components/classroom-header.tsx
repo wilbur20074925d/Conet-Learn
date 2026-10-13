@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useRef, useState, type ReactNode } from "react"
-import { ArrowLeft, PenLine, Users } from "lucide-react"
+import { ArrowLeft, PenLine, UserCog, Users } from "lucide-react"
 import BrandLogo from "@/components/brand-logo"
 import PendingLink from "@/components/pending-link"
 import LogoutButton from "@/components/logout-button"
@@ -46,6 +46,7 @@ export default function ClassroomHeader({
   showDashboardLink = false,
   onDashboardBack,
   showMaterials = true,
+  showAccountsLink = false,
   materialsSessionId,
   workspaceMode = "group-project",
   onWorkspaceModeChange,
@@ -55,6 +56,7 @@ export default function ClassroomHeader({
   groupName?: string | null
   showWorkspaceNav?: boolean
   showDashboardLink?: boolean
+  showAccountsLink?: boolean
   onDashboardBack?: () => void
   showMaterials?: boolean
   materialsSessionId?: string | null
@@ -145,6 +147,15 @@ export default function ClassroomHeader({
         )}
 
         <div className="flex shrink-0 items-center gap-2">
+          {showAccountsLink && (
+            <PendingLink
+              href="/dashboard/accounts"
+              className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:border-slate-300 hover:bg-slate-50 sm:px-3"
+            >
+              <UserCog className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Accounts</span>
+            </PendingLink>
+          )}
           {showMaterials && <SessionMaterialsButton role={role} sessionId={materialsSessionId || "current"} />}
           <LogoutButton />
         </div>

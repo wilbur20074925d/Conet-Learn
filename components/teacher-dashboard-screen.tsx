@@ -3,6 +3,7 @@
 import { useState } from "react"
 import ClassroomHeader from "@/components/classroom-header"
 import ConsentWrapper from "@/components/consent-wrapper"
+import LoadingScreen from "@/components/loading-screen"
 import TeacherClassBoard from "@/components/teacher-class-board"
 import TeacherSessionView from "@/components/teacher-session-view"
 import {
@@ -20,7 +21,7 @@ export default function TeacherDashboardScreen({
   profileId,
   classes,
   looseGroups,
-  waiting,
+  students,
   initialSession = null,
   initialView = "note",
 }: {
@@ -28,7 +29,7 @@ export default function TeacherDashboardScreen({
   profileId: string
   classes: CatalogClass[]
   looseGroups: CatalogGroup[]
-  waiting: { id: string; name: string }[]
+  students: { id: string; name: string }[]
   initialSession?: OpenedTeacherSession | null
   initialView?: "note" | "post"
 }) {
@@ -70,11 +71,11 @@ export default function TeacherDashboardScreen({
     <div className="conet-page-bg flex min-h-dvh flex-col text-slate-900">
       <ConsentWrapper userId={profileId} />
       <div className={session ? "hidden" : "flex min-h-dvh flex-col"}>
-        <ClassroomHeader name={name} role="teacher" showMaterials={false} />
+        <ClassroomHeader name={name} role="teacher" showMaterials={false} showAccountsLink />
         <TeacherClassBoard
           classes={classes}
           looseGroups={looseGroups}
-          waiting={waiting}
+          students={students}
           onOpen={openGroup}
           openingId={openingId}
         />
@@ -107,6 +108,9 @@ export default function TeacherDashboardScreen({
             onViewChange={setView}
           />
         </div>
+      )}
+      {openingId && (
+        <LoadingScreen overlay label="Opening" message="Opening the classroom…" />
       )}
       <Dialog open={Boolean(notice)} onOpenChange={(open) => !open && setNotice("")}>
         <DialogContent className="max-w-sm gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">

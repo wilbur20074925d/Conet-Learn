@@ -13,11 +13,17 @@ export type CatalogGroup = {
   chatSessionId: string | null
 }
 
+export type CatalogStudent = {
+  id: string
+  name: string
+}
+
 export type CatalogSession = {
   id: string
   classId: string
   title: string
   createdAt: string
+  students: CatalogStudent[]
   groups: CatalogGroup[]
 }
 
@@ -25,5 +31,6 @@ export type CatalogClass = {
   id: string
   name: string
   createdAt: string
+  students: CatalogStudent[]
   sessions: CatalogSession[]
 }

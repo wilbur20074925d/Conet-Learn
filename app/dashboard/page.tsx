@@ -3,14 +3,14 @@ import BrandLogo from "@/components/brand-logo"
 import ClassDashboard from "@/components/class-dashboard"
 import ClassroomHeader from "@/components/classroom-header"
 import ConsentWrapper from "@/components/consent-wrapper"
-import JoinGroup from "@/components/join-group"
+import StudentAwaitingGroup from "@/components/join-group"
 import StudentDashboardScreen from "@/components/student-dashboard-screen"
 import TeacherDashboardScreen from "@/components/teacher-dashboard-screen"
 import TeacherManagePanel from "@/components/teacher-manage-panel"
 import { getSessionContext } from "@/lib/actions"
 import { getClassCatalog } from "@/lib/class-catalog"
 import type { CatalogClass } from "@/lib/catalog"
-import { getTeacherBoard, listJoinableGroups } from "@/lib/classroom"
+import { getTeacherBoard } from "@/lib/classroom"
 import { loadStudentWorkspace, loadTeacherSession } from "@/lib/open-session"
 
 export const dynamic = "force-dynamic"
@@ -33,15 +33,18 @@ function SetupScreen({ message }: { message: string }) {
   )
 }
 
-function studentClasses(classes: CatalogClass[], joinedGroupIds: string[]) {
-  const joined = new Set(joinedGroupIds)
-  return classes.map((classroom) => ({
-    ...classroom,
-    sessions: classroom.sessions.map((session) => {
-      const mine = session.groups.filter((group) => joined.has(group.id))
-      return mine.length > 0 ? { ...session, groups: mine } : session
-    }),
-  }))
+function studentClasses(classes: CatalogClass[], profileId: string) {
+  return classes
+    .filter((classroom) => classroom.students.some((student) => student.id === profileId))
+    .map((classroom) => ({
+      ...classroom,
+      sessions: classroom.sessions
+        .filter((session) => session.students.some((student) => student.id === profileId))
+        .map((session) => ({
+          ...session,
+          groups: session.groups.filter((group) => group.members.some((member) => member.id === profileId)),
+        })),
+    }))
 }
 
 export default async function DashboardPage({
@@ -76,7 +79,7 @@ export default async function DashboardPage({
       return (
         <div className="conet-page-bg flex min-h-dvh flex-col text-slate-900">
           <ConsentWrapper userId={ctx.profileId} />
-          <ClassroomHeader name={ctx.name} role="teacher" showMaterials={false} />
+          <ClassroomHeader name={ctx.name} role="teacher" showMaterials={false} showAccountsLink />
           <div className="mx-auto w-full max-w-6xl px-4 pt-6 sm:px-6">
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950">
               {catalog.error}
@@ -93,7 +96,7 @@ export default async function DashboardPage({
         profileId={ctx.profileId}
         classes={catalog.classes}
         looseGroups={catalog.looseGroups}
-        waiting={catalog.waiting}
+        students={catalog.students}
         initialSession={opened && opened.ok ? opened.session : null}
         initialView={view}
       />
@@ -111,7 +114,7 @@ export default async function DashboardPage({
       <StudentDashboardScreen
         name={ctx.name}
         profileId={ctx.profileId}
-        classes={studentClasses(catalog.classes, ctx.groupIds)}
+        classes={studentClasses(catalog.classes, ctx.profileId)}
         joinedGroupIds={ctx.groupIds}
         initialSession={opened && opened.ok ? opened.session : null}
       />
@@ -119,13 +122,11 @@ export default async function DashboardPage({
   }
 
   if (ctx.memberships.length === 0) {
-    const directory = await listJoinableGroups()
-    if (!directory.ok) return <SetupScreen message={directory.error} />
     return (
       <div className="conet-page-bg flex min-h-dvh flex-col text-slate-900">
         <ConsentWrapper userId={ctx.profileId} />
         <ClassroomHeader name={ctx.name} role="student" showMaterials={false} />
-        <JoinGroup groups={directory.groups} />
+        <StudentAwaitingGroup />
       </div>
     )
   }
@@ -135,11 +136,13 @@ export default async function DashboardPage({
       id: "class",
       name: "Class",
       createdAt: "",
+      students: [],
       sessions: ctx.memberships.map((membership) => ({
         id: membership.groupId,
         classId: "class",
         title: membership.groupName,
         createdAt: "",
+        students: [],
         groups: [
           {
             id: membership.groupId,

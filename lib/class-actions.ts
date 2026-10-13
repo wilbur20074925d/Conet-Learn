@@ -16,7 +16,7 @@ function needsSetup(error: { code?: string; message?: string } | null) {
     error.code === "PGRST205" ||
     error.code === "42P01" ||
     error.code === "42703" ||
-    /ConetClasses|ConetClassSessions|class_session_id|conet_create_group_in_session|schema cache|does not exist/i.test(message)
+    /ConetClasses|ConetClassSessions|ConetClassMembers|ConetSessionMembers|class_session_id|conet_create_group_in_session|conet_place_students|schema cache|does not exist/i.test(message)
   )
 }
 
@@ -257,6 +257,116 @@ export async function placeGroupInSession(groupId: string, sessionId: string) {
     .update({ class_session_id: parsed.data.sessionId })
     .eq("id", parsed.data.groupId)
   if (result.error) return fail(result.error, "Could not move the group into that session.")
+  refresh()
+  return { ok: true as const }
+}
+
+const studentIdsSchema = z.array(z.string().uuid()).min(1).max(300)
+
+function placeError(error: { code?: string; message?: string } | null, fallback: string) {
+  const message = error?.message || ""
+  if (needsSetup(error)) {
+    return { ok: false as const, error: "Run supabase/conet-classes.sql in the Supabase SQL editor, then refresh." }
+  }
+  if (message.includes("already in another class")) return { ok: false as const, error: "A student can only be in one class." }
+  if (message.includes("not in this class")) {
+    return { ok: false as const, error: "Place the student in this class before adding them to a session." }
+  }
+  if (message.includes("not in this session")) {
+    return { ok: false as const, error: "Place the student in this session before adding them to a group." }
+  }
+  if (message.includes("already in this session")) {
+    return { ok: false as const, error: "That student is already in a group for this session." }
+  }
+  if (message.includes("Choose a student")) return { ok: false as const, error: "Choose at least one student." }
+  if (/ambiguous|student_id/i.test(message)) {
+    return {
+      ok: false as const,
+      error: "Run supabase/conet-classes.sql in the Supabase SQL editor again, then refresh. That update fixes placing students in a class.",
+    }
+  }
+  return { ok: false as const, error: fallback }
+}
+
+export async function placeStudentsInClass(classId: string, userIds: string[]) {
+  const auth = await teacher()
+  if (!auth.ok) return auth
+  const id = z.string().uuid().safeParse(classId)
+  const students = studentIdsSchema.safeParse(userIds)
+  if (!id.success || !students.success) return { ok: false as const, error: "Choose at least one student." }
+
+  const supabase = await createClient()
+  const result = await supabase.rpc("conet_place_students_in_class", {
+    p_class_id: id.data,
+    p_user_ids: students.data,
+  })
+  if (result.error) return placeError(result.error, "Could not place those students in the class.")
+  refresh()
+  return { ok: true as const }
+}
+
+export async function placeStudentsInSession(sessionId: string, userIds: string[]) {
+  const auth = await teacher()
+  if (!auth.ok) return auth
+  const id = z.string().uuid().safeParse(sessionId)
+  const students = studentIdsSchema.safeParse(userIds)
+  if (!id.success || !students.success) return { ok: false as const, error: "Choose at least one student." }
+
+  const supabase = await createClient()
+  const result = await supabase.rpc("conet_place_students_in_session", {
+    p_session_id: id.data,
+    p_user_ids: students.data,
+  })
+  if (result.error) return placeError(result.error, "Could not place those students in the session.")
+  refresh()
+  return { ok: true as const }
+}
+
+export async function placeStudentsInGroup(groupId: string, userIds: string[]) {
+  const auth = await teacher()
+  if (!auth.ok) return auth
+  const id = z.string().uuid().safeParse(groupId)
+  const students = studentIdsSchema.safeParse(userIds)
+  if (!id.success || !students.success) return { ok: false as const, error: "Choose at least one student." }
+
+  const supabase = await createClient()
+  const result = await supabase.rpc("conet_place_students_in_group", {
+    p_group_id: id.data,
+    p_user_ids: students.data,
+  })
+  if (result.error) return placeError(result.error, "Could not place those students in the group.")
+  refresh()
+  return { ok: true as const }
+}
+
+export async function removeStudentFromClass(classId: string, userId: string) {
+  const auth = await teacher()
+  if (!auth.ok) return auth
+  const parsed = z.object({ classId: z.string().uuid(), userId: z.string().uuid() }).safeParse({ classId, userId })
+  if (!parsed.success) return { ok: false as const, error: "That student is no longer available." }
+
+  const supabase = await createClient()
+  const result = await supabase.rpc("conet_remove_student_from_class", {
+    p_class_id: parsed.data.classId,
+    p_user_id: parsed.data.userId,
+  })
+  if (result.error) return placeError(result.error, "Could not remove that student from the class.")
+  refresh()
+  return { ok: true as const }
+}
+
+export async function removeStudentFromSession(sessionId: string, userId: string) {
+  const auth = await teacher()
+  if (!auth.ok) return auth
+  const parsed = z.object({ sessionId: z.string().uuid(), userId: z.string().uuid() }).safeParse({ sessionId, userId })
+  if (!parsed.success) return { ok: false as const, error: "That student is no longer available." }
+
+  const supabase = await createClient()
+  const result = await supabase.rpc("conet_remove_student_from_session", {
+    p_session_id: parsed.data.sessionId,
+    p_user_id: parsed.data.userId,
+  })
+  if (result.error) return placeError(result.error, "Could not remove that student from the session.")
   refresh()
   return { ok: true as const }
 }

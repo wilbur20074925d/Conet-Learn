@@ -15,7 +15,7 @@ type NewSession = {
 function friendly(message: string) {
   if (message.includes("Only students can create")) return "Only students can create a chat session."
   if (message.includes("You cannot delete")) return "You can delete chat sessions you created."
-  if (message.includes("not a group member")) return "Join a group before starting a chat session."
+  if (message.includes("not a group member")) return "You need to be in a group before starting a chat session."
   if (message.includes("invalid name")) return "Use a session title between 1 and 80 characters."
   if (message.includes("not authenticated") || message.includes("JWT")) return "Please sign in again."
   if (/failed to fetch|network/i.test(message)) return "Could not reach the server. Check your connection and try again."
