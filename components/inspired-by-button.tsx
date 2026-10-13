@@ -16,7 +16,12 @@ export default function InspiredByButton({
   onSelect: (name: string) => void
 }) {
   return (
-    <div className="flex min-w-0 flex-nowrap items-center gap-1 overflow-x-auto">
+    <div className="flex min-w-0 flex-col gap-1">
+      <p className="text-[10px] leading-snug text-neutral-500">
+        Who did you get this idea from? Tap a name below — we&apos;ll add{" "}
+        <span className="font-medium text-neutral-600">(inspired by …)</span> in your note.
+      </p>
+      <div className="flex min-w-0 flex-nowrap items-center gap-1 overflow-x-auto">
       <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.12em] text-neutral-400">
         Inspired by
       </span>
@@ -41,6 +46,7 @@ export default function InspiredByButton({
           {member.name}
         </Button>
       ))}
+      </div>
     </div>
   )
 }

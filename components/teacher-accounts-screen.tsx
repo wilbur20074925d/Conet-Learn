@@ -1,22 +1,16 @@
 "use client"
 
-import { FormEvent, useRef, useState, useTransition } from "react"
+import { FormEvent, useState, useTransition } from "react"
 import { useRouter } from "next/navigation"
-import { FileSpreadsheet, Upload } from "lucide-react"
 import ClassroomHeader from "@/components/classroom-header"
-import LoadingScreen from "@/components/loading-screen"
+import StudentImportDialog from "@/components/student-import-dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import {
-  createStudentAccount,
   createTeacherAccount,
   deleteStudentAccounts,
-  importStudentAccounts,
   resetStudentPassword,
-  type ImportRowResult,
   type ManagedAccount,
 } from "@/lib/account-actions"
-import { usernameFromName } from "@/lib/login-identity"
-import { parseStudentSpreadsheet } from "@/lib/parse-student-spreadsheet"
 import { INITIAL_STUDENT_PASSWORD } from "@/lib/student-password"
 
 const fieldClass =
@@ -36,48 +30,18 @@ export default function TeacherAccountsScreen({
   setupError?: string
 }) {
   const router = useRouter()
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const [studentName, setStudentName] = useState("")
-  const [studentId, setStudentId] = useState("")
   const [teacherName, setTeacherName] = useState("")
   const [teacherEmail, setTeacherEmail] = useState("")
   const [teacherPassword, setTeacherPassword] = useState("")
   const [error, setError] = useState("")
   const [notice, setNotice] = useState("")
-  const [importSummary, setImportSummary] = useState<ImportRowResult[] | null>(null)
   const [resettingId, setResettingId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [pending, startTransition] = useTransition()
-  const [importing, setImporting] = useState(false)
-
-  const previewUsername = studentName.trim() ? usernameFromName(studentName) : ""
 
   function refreshLists() {
     router.refresh()
-  }
-
-  async function onCreateStudent(event: FormEvent) {
-    event.preventDefault()
-    setError("")
-    setNotice("")
-    startTransition(async () => {
-      const createdName = studentName.trim()
-      const createdId = studentId.trim()
-      const result = await createStudentAccount(createdName, createdId)
-      if (!result.ok) {
-        setError(result.error)
-        return
-      }
-      setStudentName("")
-      setStudentId("")
-      setNotice(
-        result.pendingConfirm
-          ? `${usernameFromName(createdName)} was created. They must confirm email before signing in. Password: ${createdId}.`
-          : `${result.username} can sign in now. Password is their student ID (${createdId}).`
-      )
-      refreshLists()
-    })
   }
 
   async function onCreateTeacher(event: FormEvent) {
@@ -100,35 +64,6 @@ export default function TeacherAccountsScreen({
       )
       refreshLists()
     })
-  }
-
-  async function onPickSpreadsheet(file: File | null) {
-    if (!file || importing || pending) return
-    setImporting(true)
-    setError("")
-    setNotice("")
-    setImportSummary(null)
-    try {
-      const buffer = await file.arrayBuffer()
-      const rows = parseStudentSpreadsheet(buffer)
-      if (rows.length === 0) {
-        setError("Could not read any student rows. Use columns for name and student ID in the first sheet.")
-        return
-      }
-      const result = await importStudentAccounts(rows)
-      if (!result.ok) {
-        setError(result.error)
-        return
-      }
-      setImportSummary(result.results)
-      setNotice(`Imported ${result.created} of ${result.results.length} students from the spreadsheet.`)
-      refreshLists()
-    } catch {
-      setError("Could not read that file. Upload an .xlsx or .xls spreadsheet.")
-    } finally {
-      setImporting(false)
-      if (fileInputRef.current) fileInputRef.current.value = ""
-    }
   }
 
   async function onResetPassword(account: ManagedAccount) {
@@ -215,24 +150,27 @@ export default function TeacherAccountsScreen({
     refreshLists()
   }
 
-  if (importing) {
-    return <LoadingScreen label="Importing" message="Creating student accounts from your spreadsheet…" />
-  }
-
   return (
     <div className="conet-page-bg flex min-h-dvh flex-col text-slate-900">
       <ClassroomHeader name={name} role="teacher" showMaterials={false} showAccountsLink={false} showDashboardLink />
 
       <div className="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6">
-        <div className="mb-6">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Teacher</p>
-          <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">Accounts</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-slate-500">
-            Upload a spreadsheet or add students one at a time. Usernames are the student&apos;s name without spaces in
-            capital letters; passwords are their student ID (for example{" "}
-            <span className="font-semibold text-slate-800">CHANTAIMEN</span> /{" "}
-            <span className="font-semibold text-slate-800">2A00</span>).
-          </p>
+        <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Teacher</p>
+            <h1 className="mt-1 text-2xl font-bold tracking-tight text-slate-900">Accounts</h1>
+            <p className="mt-2 max-w-xl text-sm leading-relaxed text-slate-500">
+              Manage logins for your class. Student usernames are uppercase names without spaces; passwords are their
+              student ID.
+            </p>
+          </div>
+          <StudentImportDialog
+            disabled={pending || deleting || resettingId !== null}
+            onImported={() => {
+              refreshLists()
+              setNotice("Student list updated.")
+            }}
+          />
         </div>
 
         {setupError && (
@@ -267,86 +205,6 @@ export default function TeacherAccountsScreen({
           </TabsList>
 
           <TabsContent value="students" className="mt-0 space-y-4">
-            <section className="conet-surface grid gap-6 p-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.1fr)]">
-              <div className="space-y-4">
-                <div>
-                  <h2 className="text-lg font-bold text-slate-900">Upload spreadsheet</h2>
-                  <p className="mt-1 text-sm text-slate-500">
-                    First sheet with a header row: one column for name, one for student ID (.xlsx or .xls).
-                  </p>
-                </div>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-                  className="sr-only"
-                  onChange={(event) => void onPickSpreadsheet(event.target.files?.[0] ?? null)}
-                />
-                <button
-                  type="button"
-                  disabled={pending || importing}
-                  onClick={() => fileInputRef.current?.click()}
-                  className="inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:bg-white disabled:opacity-50"
-                >
-                  <Upload className="h-4 w-4" />
-                  Choose spreadsheet
-                </button>
-                <p className="flex items-start gap-2 text-xs leading-relaxed text-slate-500">
-                  <FileSpreadsheet className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
-                  Existing usernames are skipped with an error so you can fix the sheet and upload again.
-                </p>
-              </div>
-
-              <form onSubmit={onCreateStudent} className="space-y-3 border-t border-slate-100 pt-4 lg:border-l lg:border-t-0 lg:pl-6 lg:pt-0">
-                <h2 className="text-lg font-bold text-slate-900">Add one student</h2>
-                <input
-                  value={studentName}
-                  onChange={(event) => setStudentName(event.target.value)}
-                  placeholder="Chan Tai Men"
-                  autoComplete="off"
-                  maxLength={80}
-                  className={fieldClass}
-                />
-                <input
-                  value={studentId}
-                  onChange={(event) => setStudentId(event.target.value)}
-                  placeholder="Student ID (password)"
-                  autoComplete="off"
-                  maxLength={64}
-                  className={fieldClass}
-                />
-                {previewUsername && (
-                  <p className="text-xs text-slate-500">
-                    Username: <span className="font-mono font-semibold text-slate-800">{previewUsername}</span>
-                  </p>
-                )}
-                <button
-                  type="submit"
-                  disabled={pending || !studentName.trim() || !studentId.trim()}
-                  className="h-10 w-full rounded-xl bg-slate-900 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-                >
-                  {pending ? "Creating…" : "Create student account"}
-                </button>
-              </form>
-            </section>
-
-            {importSummary && importSummary.some((row) => !row.ok) && (
-              <section className="conet-surface overflow-hidden">
-                <div className="border-b border-slate-100 px-4 py-3">
-                  <h3 className="text-sm font-semibold text-slate-900">Import details</h3>
-                </div>
-                <ul className="max-h-48 divide-y divide-slate-100 overflow-y-auto text-sm">
-                  {importSummary
-                    .filter((row) => !row.ok)
-                    .map((row) => (
-                      <li key={`${row.name}-${row.studentId}`} className="px-4 py-2 text-red-700">
-                        {row.name} ({row.studentId}): {row.error}
-                      </li>
-                    ))}
-                </ul>
-              </section>
-            )}
-
             <AccountTable
               accounts={students}
               emptyLabel="No student accounts yet."

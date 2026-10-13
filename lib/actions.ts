@@ -14,6 +14,7 @@ import {
   requestNateReply,
   type NateMode,
 } from "./nate"
+import { loadNateSessionMaterials } from "./nate-session-materials"
 
 import { mapMessageRows, type Message, type RawMessage } from "./map-messages"
 import { inGroup } from "./session-membership"
@@ -300,12 +301,15 @@ export async function finishNateReply(groupId: string, sessionId: string, thinki
 
   if (later.data && later.data.length > 0) return { success: true }
 
-  const recent = await supabase
-    .from("ConetMessages")
-    .select("content, user_id, created_at, ConetUsers(name)")
-    .eq("session_id", sessionId)
-    .order("created_at", { ascending: false })
-    .limit(10)
+  const [recent, materials] = await Promise.all([
+    supabase
+      .from("ConetMessages")
+      .select("content, user_id, created_at, ConetUsers(name)")
+      .eq("session_id", sessionId)
+      .order("created_at", { ascending: false })
+      .limit(10),
+    loadNateSessionMaterials(supabase, groupId),
+  ])
 
   const history = ((recent.data || []) as Array<{
     content: string
@@ -336,7 +340,8 @@ export async function finishNateReply(groupId: string, sessionId: string, thinki
     history,
     latestUser?.content || "Please join our discussion.",
     mine.newintervene,
-    earlierFigure ? [earlierFigure] : []
+    earlierFigure ? [earlierFigure] : [],
+    materials
   )
 
   if (!reply) return { success: true }
@@ -381,16 +386,21 @@ export async function saveDocumentSnapshot(content: string | null | undefined, g
   const supabase = await createClient()
   const existing = await supabase
     .from("ConetDocuments")
-    .select("id")
+    .select("id, content")
     .eq("group_id", groupId)
     .eq("user_id", session.ctx.profileId)
     .maybeSingle()
+
+  if (isStaleWrite(existing.data?.content as string | undefined, content)) return { success: true }
+
+  const locks = await loadSubmittedLocks(supabase, existing.data?.id as string | undefined)
+  const lockedContent = applyNoteLocks(content, locks)
 
   let documentId = existing.data?.id as string | undefined
   if (!documentId) {
     const created = await supabase
       .from("ConetDocuments")
-      .insert({ group_id: groupId, user_id: session.ctx.profileId, content })
+      .insert({ group_id: groupId, user_id: session.ctx.profileId, content: lockedContent })
       .select("id")
       .single()
     if (created.error || !created.data) return { error: "Failed to save snapshot, please try again." }
@@ -398,7 +408,7 @@ export async function saveDocumentSnapshot(content: string | null | undefined, g
   } else {
     const updated = await supabase
       .from("ConetDocuments")
-      .update({ content, updated_at: new Date().toISOString() })
+      .update({ content: lockedContent, updated_at: new Date().toISOString() })
       .eq("id", documentId)
     if (updated.error) return { error: "Failed to save snapshot, please try again." }
   }
@@ -406,7 +416,7 @@ export async function saveDocumentSnapshot(content: string | null | undefined, g
   const history = await supabase.from("ConetDocumentHistory").insert({
     document_id: documentId,
     user_id: session.ctx.profileId,
-    content,
+    content: lockedContent,
     is_submit: false,
   })
   if (history.error) return { error: "Failed to save snapshot, please try again." }
@@ -414,24 +424,39 @@ export async function saveDocumentSnapshot(content: string | null | undefined, g
   return { success: true }
 }
 
-export async function submitFinalDocument(groupId: string, content?: string) {
+export type NotePart = "thoughts" | "insights"
+
+export async function submitFinalDocument(groupId: string, content?: string, part?: NotePart) {
   const session = await getSessionContext()
   if (!session.ok) return { error: session.error }
   if (!inGroup(session.ctx, groupId)) return { error: "Unauthorized" }
+  if (part && part !== "thoughts" && part !== "insights") return { error: "Unknown part." }
+
+  if (!part) return { error: "Choose a part to submit." }
 
   const supabase = await createClient()
   const payload = typeof content === "string" ? content : null
-  const existing = payload
-    ? null
-    : await supabase
-        .from("ConetDocuments")
-        .select("id, content")
-        .eq("group_id", groupId)
-        .eq("user_id", session.ctx.profileId)
-        .maybeSingle()
+  const existing = await supabase
+    .from("ConetDocuments")
+    .select("id, content")
+    .eq("group_id", groupId)
+    .eq("user_id", session.ctx.profileId)
+    .maybeSingle()
 
-  if (!payload && !existing?.data) return { error: "Write something before submitting." }
-  const contentToSubmit = payload ?? (existing?.data?.content as string)
+  if (!payload && !existing.data) return { error: "Write something before submitting." }
+  if (payload && isStaleWrite(existing.data?.content as string | undefined, payload)) {
+    return { error: "This note was reset. Refresh the page and start again." }
+  }
+  const locks = await loadSubmittedLocks(supabase, existing.data?.id as string | undefined)
+  if (part === "thoughts" && locks.thoughts !== null) return { error: "Initial thoughts are already submitted." }
+  if (part === "insights" && locks.thoughts === null) return { error: "Submit your initial thoughts first." }
+  if (part === "insights" && locks.insights !== null) return { error: "New insights are already submitted." }
+
+  let contentToSubmit = applyNoteLocks(payload ?? (existing.data?.content as string), locks)
+  const fields = readNoteFields(contentToSubmit)
+  if (part === "thoughts" && !fields.concept1.trim()) return { error: "Write your initial thoughts before submitting." }
+  if (part === "insights" && !fields.concept2.trim()) return { error: "Write your new insights before submitting." }
+  contentToSubmit = withSubmittedPart(contentToSubmit, part)
 
   const saved = await supabase
     .from("ConetDocuments")
@@ -462,35 +487,37 @@ export async function submitFinalDocument(groupId: string, content?: string) {
     .single()
   if (history.error || !history.data) return { error: "Failed to submit, please try again." }
 
-  const fields = readNoteFields(contentToSubmit)
+  const submitted = readNoteFields(contentToSubmit)
   return {
     success: true as const,
     message: "Document submitted successfully!",
     submission: {
       id: history.data.id as string,
-      concept1: fields.concept1,
-      concept2: fields.concept2,
+      concept1: submitted.concept1,
+      concept2: submitted.concept2,
+      part: submitted.part,
       createdAt,
     },
   }
 }
 
 export async function listMyNoteSubmissions(groupId: string): Promise<{
-  submissions: { id: string; concept1: string; concept2: string; createdAt: string }[]
+  submissions: { id: string; concept1: string; concept2: string; part: NotePart | "both"; createdAt: string }[]
+  draft: { concept1: string; concept2: string; savedAt: string } | null
   error?: string
 }> {
   const session = await getSessionContext()
-  if (!session.ok) return { submissions: [], error: session.error }
-  if (!inGroup(session.ctx, groupId)) return { submissions: [], error: "Unauthorized" }
+  if (!session.ok) return { submissions: [], draft: null, error: session.error }
+  if (!inGroup(session.ctx, groupId)) return { submissions: [], draft: null, error: "Unauthorized" }
 
   const supabase = await createClient()
   const doc = await supabase
     .from("ConetDocuments")
-    .select("id")
+    .select("id, content")
     .eq("group_id", groupId)
     .eq("user_id", session.ctx.profileId)
     .maybeSingle()
-  if (!doc.data) return { submissions: [] }
+  if (!doc.data) return { submissions: [], draft: null }
 
   const history = await supabase
     .from("ConetDocumentHistory")
@@ -498,33 +525,123 @@ export async function listMyNoteSubmissions(groupId: string): Promise<{
     .eq("document_id", doc.data.id)
     .eq("is_submit", true)
     .order("created_at", { ascending: false })
-  if (history.error || !history.data) return { submissions: [], error: "Could not load previous submissions." }
+  if (history.error || !history.data) return { submissions: [], draft: null, error: "Could not load previous submissions." }
+
+  const live = readNoteFields(doc.data.content as string)
+  let savedAt = ""
+  try {
+    const parsed = JSON.parse(doc.data.content as string) as { savedAt?: string }
+    savedAt = parsed?.savedAt || ""
+  } catch {
+    savedAt = ""
+  }
 
   return {
+    draft: { concept1: live.concept1, concept2: live.concept2, savedAt },
     submissions: history.data.map((row) => {
       const fields = readNoteFields(row.content as string)
       return {
         id: row.id as string,
         concept1: fields.concept1,
         concept2: fields.concept2,
+        part: fields.part,
         createdAt: row.created_at as string,
       }
     }),
   }
 }
 
-function readNoteFields(raw: string | null | undefined) {
-  if (!raw) return { concept1: "", concept2: "" }
+async function loadSubmittedLocks(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  documentId: string | undefined
+) {
+  const locks: { thoughts: string | null; insights: string | null } = { thoughts: null, insights: null }
+  if (!documentId) return locks
+  const history = await supabase
+    .from("ConetDocumentHistory")
+    .select("content")
+    .eq("document_id", documentId)
+    .eq("is_submit", true)
+    .order("created_at", { ascending: false })
+  if (history.error || !history.data) return locks
+  for (const row of history.data) {
+    const fields = readNoteFields(row.content as string)
+    if (locks.thoughts === null && fields.part !== "insights") locks.thoughts = fields.concept1
+    if (locks.insights === null && fields.part !== "thoughts") locks.insights = fields.concept2
+  }
+  return locks
+}
+
+function applyNoteLocks(raw: string, locks: { thoughts: string | null; insights: string | null }) {
+  const fields = readNoteFields(raw)
+  let savedAt = ""
   try {
     const parsed = JSON.parse(raw) as Record<string, string>
-    if (!parsed || typeof parsed !== "object") return { concept1: raw, concept2: "" }
+    savedAt = parsed?.savedAt || ""
+  } catch {
+    savedAt = ""
+  }
+  const concept1 = locks.thoughts === null ? fields.concept1 : locks.thoughts || fields.concept1
+  const concept2 = locks.insights === null ? fields.concept2 : locks.insights || fields.concept2
+  return JSON.stringify({
+    field1: concept1,
+    field2: concept2,
+    part1_concept1: concept1,
+    part1_concept2: concept2,
+    savedAt: savedAt || new Date().toISOString(),
+  })
+}
+
+function savedStamp(raw: string | null | undefined) {
+  if (!raw) return 0
+  try {
+    const parsed = JSON.parse(raw) as { savedAt?: string }
+    return Date.parse(parsed?.savedAt || "") || 0
+  } catch {
+    return 0
+  }
+}
+
+function isStaleWrite(current: string | null | undefined, incoming: string) {
+  const currentStamp = savedStamp(current)
+  const incomingStamp = savedStamp(incoming)
+  return Boolean(currentStamp && incomingStamp && incomingStamp < currentStamp)
+}
+
+function notePart(value: unknown): NotePart | "both" {
+  return value === "thoughts" || value === "insights" ? value : "both"
+}
+
+function readNoteFields(raw: string | null | undefined): { concept1: string; concept2: string; part: NotePart | "both" } {
+  if (!raw) return { concept1: "", concept2: "", part: "both" }
+  try {
+    const parsed = JSON.parse(raw) as Record<string, string>
+    if (!parsed || typeof parsed !== "object") return { concept1: raw, concept2: "", part: "both" }
     return {
       concept1: parsed.part1_concept1 || parsed.field1 || "",
       concept2: parsed.part1_concept2 || parsed.field2 || "",
+      part: notePart(parsed.submittedPart),
     }
   } catch {
-    return { concept1: raw, concept2: "" }
+    return { concept1: raw, concept2: "", part: "both" }
   }
+}
+
+function withSubmittedPart(raw: string, part: NotePart) {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, string>
+    if (parsed && typeof parsed === "object") return JSON.stringify({ ...parsed, submittedPart: part })
+  } catch {
+    // Plain text drafts are wrapped so the submitted part is still recorded.
+  }
+  const fields = readNoteFields(raw)
+  return JSON.stringify({
+    field1: fields.concept1,
+    field2: fields.concept2,
+    part1_concept1: fields.concept1,
+    part1_concept2: fields.concept2,
+    submittedPart: part,
+  })
 }
 
 export async function updateGroupNewIntervention(groupId: string, newintervene: number) {

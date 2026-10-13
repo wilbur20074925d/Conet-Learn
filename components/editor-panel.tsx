@@ -1,7 +1,9 @@
 "use client"
 
 import { useEffect, useRef, useState } from "react"
+import Image from "next/image"
 import { History } from "lucide-react"
+import blockFigure from "@/components/figure/block.png"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -38,11 +40,28 @@ function submittedAt(iso: string) {
   return date.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
 }
 
+type NotePart = "thoughts" | "insights"
+
 type PastSubmission = {
   id: string
   concept1: string
   concept2: string
+  part: NotePart | "both"
   createdAt: string
+}
+
+function partTitle(part: NotePart | "both") {
+  if (part === "thoughts") return "Initial thoughts"
+  if (part === "insights") return "New insights and supplementary points"
+  return "Both parts"
+}
+
+function submittedSentence(part: NotePart | "both") {
+  if (part === "thoughts") {
+    return "Your initial thoughts were submitted and can no longer be changed. After the discussion, write your new insights below."
+  }
+  if (part === "insights") return "Your new insights were submitted and can no longer be changed."
+  return "Your note was submitted and can no longer be changed."
 }
 
 function localKey(groupId: string) {
@@ -100,14 +119,24 @@ export default function EditorPanel({
   })
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved")
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submittingPart, setSubmittingPart] = useState<NotePart | null>(null)
   const [submitError, setSubmitError] = useState("")
+  const [successPart, setSuccessPart] = useState<NotePart | "both">("both")
   const [successOpen, setSuccessOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [submissions, setSubmissions] = useState<PastSubmission[]>([])
+  const [submissionsReady, setSubmissionsReady] = useState(false)
+  const [serverDraft, setServerDraft] = useState<{ concept1: string; concept2: string; savedAt: string } | null>(null)
   const [selectedSubmission, setSelectedSubmission] = useState<PastSubmission | null>(null)
+  const thoughtsSubmission = submissions.find((item) => item.part !== "insights")
+  const insightsSubmission = submissions.find((item) => item.part !== "thoughts")
+  const thoughtsLocked = Boolean(thoughtsSubmission)
+  const insightsLocked = Boolean(insightsSubmission)
+  const thoughtsEditable = submissionsReady && !thoughtsLocked
+  const insightsEditable = submissionsReady && thoughtsLocked && !insightsLocked
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hydrated = useRef(false)
+  const sawLock = useRef(false)
   const latestRef = useRef(structuredContent)
   latestRef.current = structuredContent
 
@@ -178,8 +207,10 @@ export default function EditorPanel({
   }, [groupId])
 
   function updateField(field: keyof StructuredContent, value: string) {
+    if (field === "part1_concept1" && !thoughtsEditable) return
+    if (field === "part1_concept2" && !insightsEditable) return
     setStructuredContent((prev) => {
-      const next = { ...prev, [field]: value }
+      const next = { ...prev, [field]: value, savedAt: new Date().toISOString() }
       debouncedSnapshotSave(next)
       return next
     })
@@ -193,15 +224,73 @@ export default function EditorPanel({
 
   async function refreshSubmissions() {
     const result = await listMyNoteSubmissions(groupId)
-    if (!result.error) setSubmissions(result.submissions)
+    if (!result.error) {
+      setSubmissions(result.submissions)
+      setServerDraft(result.draft)
+    }
+    setSubmissionsReady(true)
   }
 
   useEffect(() => {
+    setSubmissionsReady(false)
     void refreshSubmissions()
+    const timer = window.setInterval(() => {
+      void refreshSubmissions()
+    }, 6000)
+    const onFocus = () => {
+      void refreshSubmissions()
+    }
+    window.addEventListener("focus", onFocus)
+    return () => {
+      window.clearInterval(timer)
+      window.removeEventListener("focus", onFocus)
+    }
   }, [groupId])
 
-  async function handleSubmitFinal() {
-    setIsSubmitting(true)
+  useEffect(() => {
+    if (!submissionsReady) return
+    const prev = latestRef.current
+    const serverStamp = Date.parse(serverDraft?.savedAt || "") || 0
+    const localStamp = Date.parse(prev.savedAt || "") || 0
+    const serverCleared = Boolean(serverDraft && !serverDraft.concept1.trim() && !serverDraft.concept2.trim())
+    const localHasText = Boolean(prev.part1_concept1.trim() || prev.part1_concept2.trim())
+    const teacherReset =
+      !thoughtsLocked &&
+      !insightsLocked &&
+      serverCleared &&
+      ((sawLock.current && serverStamp > 0) || (localHasText && localStamp > 0 && serverStamp > localStamp))
+    if (teacherReset) {
+      sawLock.current = false
+      if (timerRef.current) {
+        clearTimeout(timerRef.current)
+        timerRef.current = null
+      }
+      const empty: StructuredContent = { part1_concept1: "", part1_concept2: "", savedAt: new Date().toISOString() }
+      setStructuredContent(empty)
+      try {
+        window.localStorage.removeItem(localKey(groupId))
+      } catch {
+        // The cleared server copy is what matters after a teacher reset.
+      }
+      void persistNow(empty)
+      return
+    }
+    if (thoughtsLocked || insightsLocked) sawLock.current = true
+    const part1_concept1 = thoughtsLocked ? thoughtsSubmission?.concept1 || prev.part1_concept1 : prev.part1_concept1
+    const part1_concept2 = insightsLocked ? insightsSubmission?.concept2 || prev.part1_concept2 : prev.part1_concept2
+    if (part1_concept1 === prev.part1_concept1 && part1_concept2 === prev.part1_concept2) return
+    setStructuredContent({ ...prev, part1_concept1, part1_concept2 })
+  }, [submissionsReady, thoughtsLocked, insightsLocked, thoughtsSubmission?.concept1, insightsSubmission?.concept2, serverDraft?.savedAt, serverDraft?.concept1, serverDraft?.concept2, groupId])
+
+  async function handleSubmitPart(part: NotePart) {
+    if (part === "thoughts" && !thoughtsEditable) return
+    if (part === "insights" && !insightsEditable) return
+    const text = part === "thoughts" ? structuredContent.part1_concept1 : structuredContent.part1_concept2
+    if (!text.trim()) {
+      setSubmitError(part === "thoughts" ? "Write your initial thoughts before submitting." : "Write your new insights before submitting.")
+      return
+    }
+    setSubmittingPart(part)
     setSubmitError("")
     if (timerRef.current) {
       clearTimeout(timerRef.current)
@@ -214,16 +303,17 @@ export default function EditorPanel({
     } catch {
       // The server copy is the one that is submitted.
     }
-    const result = await submitFinalDocument(groupId, payload)
-    setIsSubmitting(false)
+    const result = await submitFinalDocument(groupId, payload, part)
+    setSubmittingPart(null)
     if ("error" in result) {
-      setSubmitError(result.error)
+      setSubmitError(result.error || "Failed to submit, please try again.")
       return
     }
     setStructuredContent(stamped)
     setSaveStatus("saved")
     setHasUnsavedChanges(false)
     setSubmissions((current) => [result.submission, ...current.filter((item) => item.id !== result.submission.id)])
+    setSuccessPart(part)
     setSuccessOpen(true)
   }
 
@@ -235,7 +325,7 @@ export default function EditorPanel({
       <header className="flex shrink-0 items-center justify-between gap-3 border-b border-neutral-200 px-4 py-2.5">
         <div className="min-w-0">
           <h2 className="truncate text-base font-bold tracking-tight">Your essay</h2>
-          <p className="truncate text-xs text-neutral-500">Your writing stays here. Submit again whenever you want.</p>
+          <p className="truncate text-xs text-neutral-500">Submit initial thoughts first. Each part locks after you submit it.</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
@@ -264,14 +354,6 @@ export default function EditorPanel({
             />
             {statusLabel}
           </span>
-          <Button
-            type="button"
-            onClick={handleSubmitFinal}
-            disabled={isSubmitting}
-            className="h-8 rounded-lg bg-neutral-950 px-3.5 text-xs font-semibold text-white hover:bg-neutral-800"
-          >
-            {isSubmitting ? "Submitting..." : "Submit"}
-          </Button>
         </div>
       </header>
       {submitError && <p className="shrink-0 px-4 pt-2 text-xs font-medium text-red-600">{submitError}</p>}
@@ -285,18 +367,35 @@ export default function EditorPanel({
             <div className="min-w-0 flex-1">
               <h3 className="truncate text-sm font-bold">Initial thoughts</h3>
               <p className="truncate text-[11px] text-neutral-500">
-                Your initial thoughts on the given question
+                {thoughtsLocked ? "Submitted. This part can no longer be changed." : "Write this first, then submit it once."}
               </p>
             </div>
             <span className="shrink-0 text-[11px] font-semibold tabular-nums text-neutral-500">
               {wordCount(structuredContent.part1_concept1)} words
             </span>
+            {thoughtsLocked ? (
+              <span className="shrink-0 rounded-full bg-neutral-100 px-2 py-1 text-[11px] font-semibold text-neutral-600">
+                Submitted
+              </span>
+            ) : (
+              <Button
+                type="button"
+                onClick={() => void handleSubmitPart("thoughts")}
+                disabled={!thoughtsEditable || submittingPart !== null}
+                className="h-7 shrink-0 rounded-lg bg-neutral-950 px-2.5 text-[11px] font-semibold text-white hover:bg-neutral-800"
+              >
+                {submittingPart === "thoughts" ? "Submitting..." : "Submit"}
+              </Button>
+            )}
           </div>
           <Textarea
             value={structuredContent.part1_concept1}
             onChange={(event) => updateField("part1_concept1", event.target.value)}
+            readOnly={!thoughtsEditable}
             placeholder="Set out the question, then sketch the case for regulation and the case against it."
-            className="h-0 min-h-0 flex-1 basis-0 resize-none rounded-none border-0 bg-white px-3 py-2 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+            className={`h-0 min-h-0 flex-1 basis-0 resize-none rounded-none border-0 px-3 py-2 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 ${
+              thoughtsEditable ? "bg-white" : "bg-neutral-50 text-neutral-700"
+            }`}
           />
         </article>
 
@@ -308,25 +407,67 @@ export default function EditorPanel({
             <div className="min-w-0 flex-1">
               <h3 className="truncate text-sm font-bold">New insights and supplementary points</h3>
               <p className="truncate text-[11px] text-neutral-500">
-                What did the discussion change? Mark where ideas came from.
+                {insightsLocked
+                  ? "Submitted. This part can no longer be changed."
+                  : insightsEditable
+                    ? "What did the discussion change? Mark where ideas came from."
+                    : "Opens after you submit your initial thoughts."}
               </p>
             </div>
-            <span className="shrink-0 text-[11px] font-semibold tabular-nums text-neutral-500">
-              {wordCount(structuredContent.part1_concept2)} words
-            </span>
+            {(insightsEditable || insightsLocked) && (
+              <span className="shrink-0 text-[11px] font-semibold tabular-nums text-neutral-500">
+                {wordCount(structuredContent.part1_concept2)} words
+              </span>
+            )}
+            {insightsLocked ? (
+              <span className="shrink-0 rounded-full bg-neutral-100 px-2 py-1 text-[11px] font-semibold text-neutral-600">
+                Submitted
+              </span>
+            ) : insightsEditable ? (
+              <Button
+                type="button"
+                onClick={() => void handleSubmitPart("insights")}
+                disabled={submittingPart !== null}
+                className="h-7 shrink-0 rounded-lg bg-neutral-950 px-2.5 text-[11px] font-semibold text-white hover:bg-neutral-800"
+              >
+                {submittingPart === "insights" ? "Submitting..." : "Submit"}
+              </Button>
+            ) : null}
           </div>
-          <div className="shrink-0 border-b border-neutral-100 px-3 py-1.5">
-            <InspiredByButton
-              groupMembers={groupMembers}
-              onSelect={(name) => addInspiration("part1_concept2", name)}
+          {insightsEditable && (
+            <div className="shrink-0 border-b border-neutral-100 px-3 py-1.5">
+              <InspiredByButton
+                groupMembers={groupMembers}
+                onSelect={(name) => addInspiration("part1_concept2", name)}
+              />
+            </div>
+          )}
+          {insightsEditable || insightsLocked ? (
+            <Textarea
+              value={structuredContent.part1_concept2}
+              onChange={(event) => updateField("part1_concept2", event.target.value)}
+              readOnly={!insightsEditable}
+              placeholder="What did the conversation add? Which claim still feels thin?"
+              className={`h-0 min-h-0 flex-1 basis-0 resize-none rounded-none border-0 px-3 py-2 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 focus-visible:ring-offset-0 ${
+                insightsEditable ? "bg-neutral-50" : "bg-neutral-50 text-neutral-700"
+              }`}
             />
-          </div>
-          <Textarea
-            value={structuredContent.part1_concept2}
-            onChange={(event) => updateField("part1_concept2", event.target.value)}
-            placeholder="What did the conversation add? Which claim still feels thin?"
-            className="h-0 min-h-0 flex-1 basis-0 resize-none rounded-none border-0 bg-neutral-50 px-3 py-2 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-          />
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 overflow-hidden bg-white px-4 py-3 text-center">
+              <div className="relative h-[min(220px,58%)] min-h-[140px] w-full max-w-[320px] flex-1">
+                <Image
+                  src={blockFigure}
+                  alt="This part is currently blocked"
+                  fill
+                  sizes="320px"
+                  className="object-contain"
+                />
+              </div>
+              <p className="max-w-sm shrink-0 text-sm font-medium leading-6 text-neutral-600">
+                Write and submit your initial thoughts first. This part opens after that submission.
+              </p>
+            </div>
+          )}
         </article>
       </div>
 
@@ -336,7 +477,7 @@ export default function EditorPanel({
             <DialogHeader className="space-y-1 text-left">
               <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">Submitted successfully</DialogTitle>
               <DialogDescription className="text-sm leading-6 text-slate-500">
-                Your note was submitted. The writing stays on this page, so you can keep editing and submit again.
+                {submittedSentence(successPart)}
               </DialogDescription>
             </DialogHeader>
           </div>
@@ -367,28 +508,32 @@ export default function EditorPanel({
               </DialogTitle>
               <DialogDescription className="text-sm leading-6 text-slate-500">
                 {selectedSubmission
-                  ? submittedAt(selectedSubmission.createdAt)
-                  : "Each submit is kept. Opening one does not change what you are writing now."}
+                  ? `${partTitle(selectedSubmission.part)} · ${submittedAt(selectedSubmission.createdAt)}`
+                  : "Each part is kept on its own. Opening one does not change what you are writing now."}
               </DialogDescription>
             </DialogHeader>
           </div>
           <div className="max-h-[min(24rem,calc(100dvh-12rem))] overflow-y-auto px-5 py-4">
             {selectedSubmission ? (
               <div className="space-y-4">
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Initial thoughts</p>
-                  <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
-                    {selectedSubmission.concept1 || "Nothing written."}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                    New insights and supplementary points
-                  </p>
-                  <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
-                    {selectedSubmission.concept2 || "Nothing written."}
-                  </p>
-                </div>
+                {selectedSubmission.part !== "insights" && (
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Initial thoughts</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                      {selectedSubmission.concept1 || "Nothing written."}
+                    </p>
+                  </div>
+                )}
+                {selectedSubmission.part !== "thoughts" && (
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
+                      New insights and supplementary points
+                    </p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                      {selectedSubmission.concept2 || "Nothing written."}
+                    </p>
+                  </div>
+                )}
               </div>
             ) : submissions.length === 0 ? (
               <p className="text-sm text-slate-500">You have not submitted this note yet.</p>
@@ -401,7 +546,7 @@ export default function EditorPanel({
                       onClick={() => setSelectedSubmission(item)}
                       className="flex w-full items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-left transition hover:border-slate-300 hover:bg-white"
                     >
-                      <span className="text-sm font-semibold text-slate-900">Submission {submissions.length - index}</span>
+                      <span className="text-sm font-semibold text-slate-900">{partTitle(item.part)}</span>
                       <span className="text-xs font-medium text-slate-500">{submittedAt(item.createdAt)}</span>
                     </button>
                   </li>

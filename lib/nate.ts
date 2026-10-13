@@ -1,5 +1,7 @@
 export const NATE_USER_ID = "00000000-0000-0000-0000-000000000999"
 export const NATE_THINKING = "I am thinking..."
+/** Shown in the composer when @-mentioning NATE (stored in message text). */
+export const NATE_MENTION_TEXT = "@NATE (AI Chatbot)"
 
 export const NATE_TRAINED_PROMPT = `You are NATE, a collaborative learning partner in this student group. You work alongside your peers to develop argumentation skills through shared inquiry and mutual support.
 
@@ -79,7 +81,8 @@ export async function requestNateReply(
   history: HistoryTurn[],
   userMessage: string,
   mode: NateMode,
-  figures: string[] = []
+  figures: string[] = [],
+  materials?: { text: string; images: string[] }
 ): Promise<string> {
   const apiKey = process.env.VITE_ZENMUX_API_KEY
   if (!apiKey) {
@@ -108,10 +111,18 @@ export async function requestNateReply(
     : question
   conversation.push({ role: "user", content: latest })
 
-  const messages =
-    mode === 1
-      ? [{ role: "system", content: NATE_TRAINED_PROMPT }, ...conversation]
-      : conversation
+  const system = [mode === 1 ? NATE_TRAINED_PROMPT : "", materials?.text || ""].filter(Boolean).join("\n\n")
+  const materialFigures: ChatContent | null = materials?.images.length
+    ? [
+        { type: "text", text: "These figures belong to the session materials. Read them before the discussion." },
+        ...materials.images.slice(0, 4).map((url) => ({ type: "image_url" as const, image_url: { url } })),
+      ]
+    : null
+  const messages = [
+    ...(system ? [{ role: "system", content: system }] : []),
+    ...(materialFigures ? [{ role: "user", content: materialFigures }] : []),
+    ...conversation,
+  ]
 
   const body: Record<string, unknown> = {
     model: "openai/gpt-4o-mini",

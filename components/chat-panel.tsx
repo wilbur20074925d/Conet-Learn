@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { EmojiPicker } from "@/components/ui/emoji-picker"
 import { finishNateReply, type Message } from "@/lib/actions"
 import { mapMessageRows, type RawMessage } from "@/lib/map-messages"
-import { NATE_THINKING, NATE_USER_ID, stripFigures } from "@/lib/nate"
+import { NATE_MENTION_TEXT, NATE_THINKING, NATE_USER_ID, stripFigures } from "@/lib/nate"
 import {
   AWAY_WINDOW_MS,
   fetchSessionMessages,
@@ -126,7 +126,11 @@ const ChatInputForm = memo(function ChatInputForm({
     if (!mention) return []
     const query = mention.query.trim().toLowerCase()
     if (!query) return roster
-    return roster.filter((person) => person.name.toLowerCase().includes(query))
+    return roster.filter((person) => {
+      const label =
+        "nate" in person && person.nate ? `${person.name} AI Chatbot` : person.name
+      return label.toLowerCase().includes(query)
+    })
   }, [mention, roster])
 
   const menuOpen = mention !== null && suggestions.length > 0
@@ -148,7 +152,8 @@ const ChatInputForm = memo(function ChatInputForm({
     const cursor = inputRef.current?.selectionStart ?? inputValue.length
     const current = readMention(inputValue, cursor)
     if (!current) return
-    const insert = `@${person.name} `
+    const insert =
+      person.id === NATE_USER_ID ? `${NATE_MENTION_TEXT} ` : `@${person.name} `
     const next = inputValue.slice(0, current.start) + insert + inputValue.slice(cursor)
     const nextCursor = current.start + insert.length
     setInputValue(next)
@@ -313,7 +318,14 @@ const ChatInputForm = memo(function ChatInputForm({
                         <SeminarIcon className="h-6 w-6" iconClassName="h-3 w-3" />
                       )}
                       <span className="min-w-0 truncate font-semibold text-slate-800">
-                        {person.name}
+                        {person.nate ? (
+                          <>
+                            NATE
+                            <span className="ml-1 font-medium text-slate-500">(AI Chatbot)</span>
+                          </>
+                        ) : (
+                          person.name
+                        )}
                         {you ? <span className="ml-1.5 font-medium text-slate-400">you</span> : null}
                       </span>
                     </button>
@@ -447,7 +459,9 @@ function escapeHtml(value: string) {
 }
 
 function highlightMentions(text: string, names: string[]) {
-  const needles = [...new Set(["NATE", ...names.map((name) => name.trim()).filter(Boolean)])]
+  const needles = [
+    ...new Set(["NATE (AI Chatbot)", "NATE", ...names.map((name) => name.trim()).filter(Boolean)]),
+  ]
     .map((name) => `@${escapeHtml(name)}`)
     .sort((a, b) => b.length - a.length)
   if (needles.length === 0) return text

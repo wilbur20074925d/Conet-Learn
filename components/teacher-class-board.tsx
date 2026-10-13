@@ -6,6 +6,7 @@ import { ArrowRight, Copy, Pencil, Plus, Trash2 } from "lucide-react"
 import NateModeSwitch from "@/components/nate-mode-switch"
 import PendingLink from "@/components/pending-link"
 import SessionArtwork, { artworkIndexes } from "@/components/session-artwork"
+import ManageStudentsDialog from "@/components/manage-students-dialog"
 import SessionMaterialsButton from "@/components/session-materials-button"
 import {
   Dialog,
@@ -1044,171 +1045,35 @@ export default function TeacherClassBoard({
   )
 }
 
+function rosterInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean)
+  if (parts.length === 0) return "?"
+  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase()
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+}
+
 function StudentRoster({ students, empty }: { students: CatalogStudent[]; empty: string }) {
-  if (students.length === 0) return <p className="text-sm text-slate-500">{empty}</p>
+  if (students.length === 0) {
+    return (
+      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-3 text-sm text-slate-500">
+        {empty}
+      </div>
+    )
+  }
   return (
     <ul className="flex flex-wrap gap-2">
       {students.map((student) => (
-        <li key={student.id} className="rounded-full bg-slate-100 px-3 py-1 text-sm text-slate-800">
-          {student.name}
+        <li
+          key={student.id}
+          className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-200/80 bg-white py-1 pl-1 pr-3 text-sm shadow-sm"
+        >
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-600">
+            {rosterInitials(student.name)}
+          </span>
+          <span className="truncate font-medium text-slate-800">{student.name}</span>
         </li>
       ))}
     </ul>
-  )
-}
-
-function ManageStudentsDialog({
-  title,
-  description,
-  available,
-  enrolled,
-  onAdd,
-  onMoveOut,
-}: {
-  title: string
-  description: string
-  available: CatalogStudent[]
-  enrolled: CatalogStudent[]
-  onAdd: (students: CatalogStudent[]) => void
-  onMoveOut: (students: CatalogStudent[]) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const [adding, setAdding] = useState<string[]>([])
-  const [removing, setRemoving] = useState<string[]>([])
-
-  function openDialog() {
-    setAdding([])
-    setRemoving([])
-    setOpen(true)
-  }
-
-  function toggle(list: string[], id: string, setList: (next: string[]) => void) {
-    setList(list.includes(id) ? list.filter((item) => item !== id) : [...list, id])
-  }
-
-  function chosen(students: CatalogStudent[], ids: string[]) {
-    return students.filter((student) => ids.includes(student.id))
-  }
-
-  return (
-    <>
-      <button
-        type="button"
-        onClick={openDialog}
-        className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 transition hover:bg-slate-50"
-      >
-        Manage students
-      </button>
-      <Dialog open={open} onOpenChange={(next) => (next ? openDialog() : setOpen(false))}>
-        <DialogContent className="max-w-sm gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">
-          <div className="border-b border-slate-100 px-5 pb-4 pt-5 pr-12">
-            <DialogHeader className="space-y-1 text-left">
-              <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">{title}</DialogTitle>
-              <DialogDescription className="text-sm leading-6 text-slate-500">{description}</DialogDescription>
-            </DialogHeader>
-          </div>
-          <div className="max-h-[70vh] space-y-5 overflow-y-auto px-5 py-4">
-            <StudentPicker
-              label="Move out"
-              hint="Students already here"
-              students={enrolled}
-              empty="No students to move out."
-              selected={removing}
-              onToggle={(id) => toggle(removing, id, setRemoving)}
-              onSelectAll={() => setRemoving(removing.length === enrolled.length ? [] : enrolled.map((student) => student.id))}
-              actionLabel="Move out"
-              onAction={() => {
-                const next = chosen(enrolled, removing)
-                setOpen(false)
-                onMoveOut(next)
-              }}
-            />
-            <StudentPicker
-              label="Add in"
-              hint="Students you can add"
-              students={available}
-              empty="No students to add."
-              selected={adding}
-              onToggle={(id) => toggle(adding, id, setAdding)}
-              onSelectAll={() => setAdding(adding.length === available.length ? [] : available.map((student) => student.id))}
-              actionLabel="Add in"
-              onAction={() => {
-                const next = chosen(available, adding)
-                setOpen(false)
-                onAdd(next)
-              }}
-            />
-          </div>
-        </DialogContent>
-      </Dialog>
-    </>
-  )
-}
-
-function StudentPicker({
-  label,
-  hint,
-  students,
-  empty,
-  selected,
-  onToggle,
-  onSelectAll,
-  actionLabel,
-  onAction,
-}: {
-  label: string
-  hint: string
-  students: CatalogStudent[]
-  empty: string
-  selected: string[]
-  onToggle: (id: string) => void
-  onSelectAll: () => void
-  actionLabel: string
-  onAction: () => void
-}) {
-  const allSelected = students.length > 0 && selected.length === students.length
-  return (
-    <section>
-      <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">{label}</p>
-      <p className="mt-1 text-sm text-slate-500">{hint}</p>
-      {students.length === 0 ? (
-        <p className="mt-2 text-sm text-slate-500">{empty}</p>
-      ) : (
-        <>
-          <label className="mt-2 flex items-center gap-2 text-sm font-semibold text-slate-900">
-            <input type="checkbox" checked={allSelected} onChange={onSelectAll} className="h-4 w-4 rounded border-slate-300" />
-            Select all
-          </label>
-          <ul className="mt-2 max-h-36 space-y-1 overflow-y-auto">
-            {students.map((student) => (
-              <li key={student.id}>
-                <label className="flex items-center gap-2 rounded-xl px-2 py-1.5 text-sm text-slate-800 hover:bg-slate-50">
-                  <input
-                    type="checkbox"
-                    checked={selected.includes(student.id)}
-                    onChange={() => onToggle(student.id)}
-                    className="h-4 w-4 rounded border-slate-300"
-                  />
-                  <span className="min-w-0 truncate">{student.name}</span>
-                </label>
-              </li>
-            ))}
-          </ul>
-          <div className="mt-3 flex justify-end">
-            <button
-              type="button"
-              disabled={selected.length === 0}
-              onClick={onAction}
-              className={`h-9 rounded-xl px-3.5 text-sm font-semibold text-white disabled:opacity-50 ${
-                actionLabel === "Move out" ? "bg-red-600 hover:bg-red-700" : "bg-slate-900 hover:bg-slate-800"
-              }`}
-            >
-              {actionLabel}
-            </button>
-          </div>
-        </>
-      )}
-    </section>
   )
 }
 
@@ -1269,19 +1134,25 @@ function GroupCard({
       <div className="mt-3">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Students</p>
         {group.members.length === 0 && <p className="mt-1 text-xs text-slate-500">No students in this group yet.</p>}
-        <ul className="mt-2 space-y-2">
+        <ul className="mt-2 space-y-1.5">
           {group.members.map((student) => (
-            <li key={student.id} className="rounded-xl bg-slate-50 px-2.5 py-2">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-semibold text-slate-800">{student.name}</p>
-                <button
-                  type="button"
-                  onClick={() => onRemove(student.id, student.name)}
-                  className="h-8 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-600 hover:bg-slate-100"
-                >
-                  Remove
-                </button>
+            <li
+              key={student.id}
+              className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/80 px-2 py-1.5"
+            >
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-bold text-slate-600 shadow-sm">
+                  {rosterInitials(student.name)}
+                </span>
+                <p className="truncate text-sm font-medium text-slate-800">{student.name}</p>
               </div>
+              <button
+                type="button"
+                onClick={() => onRemove(student.id, student.name)}
+                className="h-8 shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-600 transition hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+              >
+                Remove
+              </button>
             </li>
           ))}
         </ul>

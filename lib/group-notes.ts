@@ -7,6 +7,7 @@ export type NoteSubmission = {
   id: string
   concept1: string
   concept2: string
+  part: "thoughts" | "insights" | "both"
   createdAt: string
 }
 
@@ -18,17 +19,24 @@ export type IndividualNoteRecord = {
   submissions: NoteSubmission[]
 }
 
-function readFields(raw: string | null | undefined) {
-  if (!raw) return { concept1: "", concept2: "" }
+function readFields(raw: string | null | undefined): {
+  concept1: string
+  concept2: string
+  part: "thoughts" | "insights" | "both"
+} {
+  if (!raw) return { concept1: "", concept2: "", part: "both" }
   try {
     const parsed = JSON.parse(raw) as Record<string, string>
-    if (!parsed || typeof parsed !== "object") return { concept1: raw, concept2: "" }
+    if (!parsed || typeof parsed !== "object") return { concept1: raw, concept2: "", part: "both" }
+    const marked = parsed.submittedPart
+    const part: "thoughts" | "insights" | "both" = marked === "thoughts" || marked === "insights" ? marked : "both"
     return {
       concept1: parsed.part1_concept1 || parsed.field1 || "",
       concept2: parsed.part1_concept2 || parsed.field2 || "",
+      part,
     }
   } catch {
-    return { concept1: raw, concept2: "" }
+    return { concept1: raw, concept2: "", part: "both" }
   }
 }
 
@@ -77,6 +85,7 @@ export async function listGroupIndividualNotes(
           id: row.id as string,
           concept1: fields.concept1,
           concept2: fields.concept2,
+          part: fields.part,
           createdAt: row.created_at as string,
         })
         submissionsByDocument.set(documentId, list)

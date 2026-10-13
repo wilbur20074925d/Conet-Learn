@@ -5,6 +5,7 @@ import ChatPanel from "@/components/chat-panel"
 import CollaborativeDocumentationPanel from "@/components/collaborative-docs/CollaborativeDocumentationPanel"
 import type { CollaborativeNote } from "@/lib/collaborative-notes"
 import type { Message } from "@/lib/map-messages"
+import { resetStudentIndividualNote } from "@/lib/reset-student-note"
 
 export type IndividualNoteView = {
   userId: string
@@ -15,8 +16,15 @@ export type IndividualNoteView = {
     id: string
     concept1: string
     concept2: string
+    part?: "thoughts" | "insights" | "both"
     createdAt: string
   }[]
+}
+
+function partTitle(part: "thoughts" | "insights" | "both" | undefined) {
+  if (part === "thoughts") return "Initial thoughts"
+  if (part === "insights") return "New insights and supplementary points"
+  return "Both parts"
 }
 
 function submittedAt(iso: string) {
@@ -34,7 +42,47 @@ function NoteText({ label, value }: { label: string; value: string }) {
   )
 }
 
-function NoteReadout({ notes, unavailable }: { notes: IndividualNoteView[]; unavailable: boolean }) {
+function savedText(live: string, submitted: string | undefined) {
+  const current = live.trim() ? live : ""
+  if (current) return current
+  return submitted?.trim() ? submitted : ""
+}
+
+function NoteReadout({
+  notes,
+  unavailable,
+  groupId,
+}: {
+  notes: IndividualNoteView[]
+  unavailable: boolean
+  groupId: string
+}) {
+  const [items, setItems] = useState(notes)
+  const [resettingId, setResettingId] = useState<string | null>(null)
+  const [resetError, setResetError] = useState("")
+
+  useEffect(() => {
+    setItems(notes)
+  }, [notes])
+
+  async function resetStudent(userId: string, name: string) {
+    if (
+      !window.confirm(
+        `Reset ${name}'s individual note? Their writing and submissions will be cleared so they can answer again from the beginning.`
+      )
+    ) {
+      return
+    }
+    setResettingId(userId)
+    setResetError("")
+    const result = await resetStudentIndividualNote(groupId, userId)
+    setResettingId(null)
+    if (!result.ok) {
+      setResetError(result.error)
+      return
+    }
+    setItems(result.notes)
+  }
   if (unavailable) {
     return (
       <div className="flex h-full items-center justify-center px-8 text-center">
@@ -47,7 +95,7 @@ function NoteReadout({ notes, unavailable }: { notes: IndividualNoteView[]; unav
       </div>
     )
   }
-  if (notes.length === 0) {
+  if (items.length === 0) {
     return (
       <div className="flex h-full items-center justify-center px-8 text-center">
         <div>
@@ -62,56 +110,72 @@ function NoteReadout({ notes, unavailable }: { notes: IndividualNoteView[]; unav
 
   return (
     <div className="h-full overflow-y-auto bg-white px-4 py-4 sm:px-5">
+      {resetError && <p className="mb-3 text-xs font-medium text-red-600">{resetError}</p>}
       <ul className="space-y-3">
-        {notes.map((note) => {
+        {items.map((note) => {
           const submissions = note.submissions || []
-          const latest = submissions[0]
-          const earlier = submissions.slice(1)
+          const latestThoughts = submissions.find((item) => item.part !== "insights")
+          const latestInsights = submissions.find((item) => item.part !== "thoughts")
+          const shown = new Set([latestThoughts?.id, latestInsights?.id].filter(Boolean))
+          const earlier = submissions.filter((item) => !shown.has(item.id))
+          const thoughtsText = savedText(note.concept1, latestThoughts?.concept1)
+          const insightsText = savedText(note.concept2, latestInsights?.concept2)
           return (
             <li key={note.userId} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
               <div className="flex items-center justify-between gap-3">
                 <p className="text-sm font-bold text-slate-900">{note.name}</p>
-                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
-                  {submissions.length === 0
-                    ? "Not submitted"
-                    : `${submissions.length} ${submissions.length === 1 ? "submission" : "submissions"}`}
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+                    {submissions.length === 0
+                      ? "Not submitted"
+                      : `${submissions.length} ${submissions.length === 1 ? "submission" : "submissions"}`}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void resetStudent(note.userId, note.name)}
+                    disabled={resettingId !== null}
+                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:border-slate-300 hover:bg-slate-50 disabled:opacity-50"
+                  >
+                    {resettingId === note.userId ? "Resetting..." : "Reset"}
+                  </button>
+                </div>
               </div>
-              {latest ? (
-                <div className="mt-3 space-y-3">
+              <div className="mt-3 space-y-3">
+                <div>
                   <p className="text-xs font-medium text-slate-500">
-                    Latest · {submittedAt(latest.createdAt)}
+                    Initial thoughts ·{" "}
+                    {latestThoughts ? `Submitted ${submittedAt(latestThoughts.createdAt)}` : "Not submitted"}
                   </p>
-                  <NoteText label="Initial thoughts" value={latest.concept1} />
-                  <NoteText label="New insights and supplementary points" value={latest.concept2} />
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                    {thoughtsText || "Nothing written yet."}
+                  </p>
                 </div>
-              ) : (
-                <div className="mt-3 space-y-3">
+                <div>
                   <p className="text-xs font-medium text-slate-500">
-                    {note.concept1 || note.concept2 ? "Current writing, not submitted yet." : "No submission yet."}
+                    New insights and supplementary points ·{" "}
+                    {latestInsights ? `Submitted ${submittedAt(latestInsights.createdAt)}` : "Not submitted"}
                   </p>
-                  {(note.concept1 || note.concept2) && (
-                    <>
-                      <NoteText label="Initial thoughts" value={note.concept1} />
-                      <NoteText label="New insights and supplementary points" value={note.concept2} />
-                    </>
-                  )}
+                  <p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+                    {insightsText || "Nothing written yet."}
+                  </p>
                 </div>
-              )}
+              </div>
               {earlier.length > 0 && (
                 <details className="mt-3 border-t border-slate-200 pt-3">
                   <summary className="cursor-pointer text-xs font-semibold text-slate-600">
                     {earlier.length} earlier {earlier.length === 1 ? "submission" : "submissions"}
                   </summary>
                   <ul className="mt-3 space-y-3">
-                    {earlier.map((item, index) => (
+                    {earlier.map((item) => (
                       <li key={item.id} className="rounded-xl border border-slate-200 bg-white px-3 py-3">
                         <p className="text-xs font-semibold text-slate-700">
-                          Submission {submissions.length - index - 1} · {submittedAt(item.createdAt)}
+                          {partTitle(item.part)} · {submittedAt(item.createdAt)}
                         </p>
                         <div className="mt-2 space-y-3">
-                          <NoteText label="Initial thoughts" value={item.concept1} />
-                          <NoteText label="New insights and supplementary points" value={item.concept2} />
+                          {item.part !== "insights" && <NoteText label="Initial thoughts" value={item.concept1} />}
+                          {item.part !== "thoughts" && (
+                            <NoteText label="New insights and supplementary points" value={item.concept2} />
+                          )}
                         </div>
                       </li>
                     ))}
@@ -236,7 +300,7 @@ export default function TeacherSessionView({
         </div>
         <div className="conet-surface min-h-0 overflow-hidden">
           {panel === "note" ? (
-            <NoteReadout notes={individualNotes} unavailable={notesUnavailable} />
+            <NoteReadout notes={individualNotes} unavailable={notesUnavailable} groupId={groupId} />
           ) : (
             <CollaborativeDocumentationPanel
               key={groupId}
