@@ -39,22 +39,52 @@ export function artworkIndexes(classes: { sessions: { id: string }[] }[]) {
   return indexes
 }
 
+const variantClass = {
+  banner: "h-40 sm:h-48",
+  side: "",
+} as const
+
+const sideWidth = "w-full min-w-0"
+
+const variantBorder = {
+  banner: "border-b border-slate-100",
+  side: "border-r border-slate-100",
+} as const
+
 export default function SessionArtwork({
   index,
-  className = "h-40 sm:h-48",
+  className,
+  variant = "banner",
 }: {
   index: number
   className?: string
+  variant?: keyof typeof variantClass
 }) {
+  const image = (
+    <Image
+      src={sessionFoodImage(index)}
+      alt=""
+      fill
+      sizes={variant === "side" ? "(min-width: 1024px) 18rem, (min-width: 640px) 14rem, 10.5rem" : "(min-width: 1152px) 72rem, 100vw"}
+      className="object-cover object-[center_46%] transition duration-700 ease-out group-hover/session:scale-[1.035]"
+    />
+  )
+
+  if (variant === "side") {
+    return (
+      <div
+        className={`flex h-full min-h-[6.5rem] flex-col overflow-hidden bg-slate-100 ${variantBorder.side} ${sideWidth} ${className ?? variantClass.side}`}
+      >
+        <div className="relative min-h-0 flex-1">{image}</div>
+      </div>
+    )
+  }
+
   return (
-    <div className={`relative overflow-hidden border-b border-slate-100 bg-slate-100 ${className}`}>
-      <Image
-        src={sessionFoodImage(index)}
-        alt=""
-        fill
-        sizes="(min-width: 1152px) 72rem, 100vw"
-        className="object-cover object-[center_46%] transition duration-700 ease-out group-hover/session:scale-[1.035]"
-      />
+    <div
+      className={`relative shrink-0 overflow-hidden bg-slate-100 ${variantBorder[variant]} ${className ?? variantClass[variant]}`}
+    >
+      {image}
     </div>
   )
 }

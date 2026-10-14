@@ -72,29 +72,30 @@ export default function ClassDashboard({
                   {classroom.sessions.map((session, index) => (
                     <li
                       key={session.id}
-                      className="group/session conet-surface overflow-hidden transition duration-300 hover:-translate-y-0.5 hover:shadow-md"
+                      className="group/session conet-surface grid overflow-hidden transition duration-300 hover:-translate-y-0.5 hover:shadow-md grid-cols-[10.5rem_minmax(0,1fr)] sm:grid-cols-[14rem_minmax(0,1fr)] md:grid-cols-[16rem_minmax(0,1fr)] lg:grid-cols-[18rem_minmax(0,1fr)]"
                     >
-                      <SessionArtwork index={art.get(session.id) ?? index} />
-                      <div className="flex flex-wrap items-center gap-3 border-b border-slate-100 bg-white px-4 py-3.5 sm:px-5">
-                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">
-                          {index + 1}
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Session</p>
-                          <h3 className="truncate text-base font-bold tracking-tight text-slate-900">{session.title}</h3>
+                      <SessionArtwork index={art.get(session.id) ?? index} variant="side" />
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-white px-3 py-2.5 sm:gap-3 sm:px-4">
+                          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">
+                            {index + 1}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Session</p>
+                            <h3 className="truncate text-base font-bold tracking-tight text-slate-900">{session.title}</h3>
+                          </div>
+                          <p className="text-xs font-medium text-slate-500">{groupLabel(session.groups.length)}</p>
+                          {showMaterials && <SessionMaterialsButton role={role} sessionId={session.id} compact />}
                         </div>
-                        <p className="text-xs font-medium text-slate-500">{groupLabel(session.groups.length)}</p>
-                        {showMaterials && <SessionMaterialsButton role={role} sessionId={session.id} compact />}
-                      </div>
 
                       {session.groups.length === 0 ? (
-                        <p className="px-5 py-6 text-sm text-slate-500">
+                        <p className="px-4 py-4 text-sm text-slate-500 sm:px-4">
                           {role === "student"
                             ? "Your teacher will place you in a group for this session."
                             : "No groups in this session yet."}
                         </p>
                       ) : (
-                        <ul className="flex flex-col gap-2 border-t border-slate-100 bg-slate-50/40 px-3 py-3 sm:px-4 sm:py-4">
+                        <ul className="flex flex-col gap-2 bg-slate-50/40 px-2.5 py-2.5 sm:px-3 sm:py-3">
                           {session.groups.map((group) => {
                             const member = role !== "student" || joined.has(group.id)
                             const shown = group.members.slice(0, 5)
@@ -207,6 +208,7 @@ export default function ClassDashboard({
                           })}
                         </ul>
                       )}
+                      </div>
                     </li>
                   ))}
                 </ol>

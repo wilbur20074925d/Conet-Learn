@@ -759,11 +759,11 @@ export default function TeacherClassBoard({
                 {classroom.sessions.map((session, index) => (
                   <li
                     key={session.id}
-                    className="group/session overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/70 transition duration-300 hover:border-slate-300 hover:shadow-md"
+                    className="group/session grid overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/70 transition duration-300 hover:border-slate-300 hover:shadow-md grid-cols-[10.5rem_minmax(0,1fr)] sm:grid-cols-[14rem_minmax(0,1fr)] md:grid-cols-[16rem_minmax(0,1fr)] lg:grid-cols-[18rem_minmax(0,1fr)]"
                   >
-                    <SessionArtwork index={art.get(session.id) ?? index} className="h-32 sm:h-40" />
-                    <div className="p-3 sm:p-4">
-                    <div className="flex flex-wrap items-center gap-3">
+                    <SessionArtwork index={art.get(session.id) ?? index} variant="side" />
+                    <div className="min-w-0 flex-1 p-2.5 sm:p-3">
+                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                       <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">
                         {index + 1}
                       </span>
