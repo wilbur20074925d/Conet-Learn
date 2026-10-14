@@ -26,6 +26,8 @@ const features = [
   },
 ] as const
 
+const WELCOME_DISMISSED_KEY = "conet-welcome-dismissed"
+
 interface WelcomeModalProps {
   userId: string
   userName?: string | null
@@ -38,9 +40,14 @@ export default function WelcomeModal({ userId, userName, onConsentGiven }: Welco
   const [activeFeature, setActiveFeature] = useState(0)
   const [entered, setEntered] = useState(false)
 
-  // Show on each fresh visit after login (no sessionStorage — remount / new login shows again).
+  // Show once per browser tab after sign-in; not again when returning from a classroom session.
   useEffect(() => {
     if (!userId) return
+    try {
+      if (sessionStorage.getItem(WELCOME_DISMISSED_KEY) === userId) return
+    } catch {
+      // sessionStorage unavailable — still show welcome
+    }
     setIsOpen(true)
   }, [userId])
 
@@ -58,6 +65,11 @@ export default function WelcomeModal({ userId, userName, onConsentGiven }: Welco
     setIsSubmitting(true)
     setIsOpen(false)
     onConsentGiven?.(true)
+    try {
+      sessionStorage.setItem(WELCOME_DISMISSED_KEY, userId)
+    } catch {
+      // ignore
+    }
 
     void fetch("/api/user-consent", {
       method: "POST",

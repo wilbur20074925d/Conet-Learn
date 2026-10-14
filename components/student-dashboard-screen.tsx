@@ -57,7 +57,7 @@ export default function StudentDashboardScreen({
 
   return (
     <div className="conet-page-bg flex min-h-dvh flex-col text-slate-900">
-      <ConsentWrapper userId={profileId} userName={name} />
+      {!session && <ConsentWrapper userId={profileId} userName={name} />}
       <div className={session ? "hidden" : "flex min-h-dvh flex-col"}>
         <ClassroomHeader name={name} role="student" profileId={profileId} showMaterials={false} />
         <ClassDashboard

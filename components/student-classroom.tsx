@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react"
 import ClassroomHeader from "@/components/classroom-header"
-import ConsentWrapper from "@/components/consent-wrapper"
 import StudentWorkspace, { type StudentWorkspaceMode } from "@/components/student-workspace"
 import type { ChatSession } from "@/lib/classroom"
 import type { CollaborativeNote } from "@/lib/collaborative-notes"
@@ -70,7 +69,6 @@ export default function StudentClassroom({
 
   return (
     <div className="conet-page-bg flex h-dvh flex-col overflow-hidden text-slate-900">
-      <ConsentWrapper userId={currentUserId} userName={currentUserName} />
       <ClassroomHeader
         name={name}
         role="student"
