@@ -1,4 +1,4 @@
-import { AGENT_DISPLAY_NAME, NATE_USER_ID } from "./nate"
+import { AGENT_DISPLAY_NAME, NATE_USER_ID, stripAgentSpeakerPrefix } from "./nate"
 
 export interface Message {
   id: string
@@ -35,27 +35,36 @@ function authorOf(row: RawMessage) {
   return Array.isArray(row.ConetUsers) ? row.ConetUsers[0] : row.ConetUsers
 }
 
+function visibleContent(content: string, isAi: boolean) {
+  if (!isAi) return content
+  return stripAgentSpeakerPrefix(content) || content
+}
+
 export function mapMessageRows(rows: RawMessage[]): Message[] {
   const byId = new Map(rows.map((row) => [row.id, row]))
   return rows.map((row) => {
     const author = authorOf(row)
+    const isAi = author?.role === "ai" || row.user_id === NATE_USER_ID
     const original = row.reply_to ? byId.get(row.reply_to) : undefined
     const originalAuthor = original ? authorOf(original) : null
+    const originalIsAi = Boolean(
+      original && (original.user_id === NATE_USER_ID || originalAuthor?.role === "ai")
+    )
     return {
       id: row.id,
-      content: row.content,
+      content: visibleContent(row.content, isAi),
       created_at: row.created_at,
       user_id: row.user_id,
       name: row.user_id === NATE_USER_ID || author?.role === "ai" ? AGENT_DISPLAY_NAME : author?.name || "Member",
       avatar_url: author?.avatar_url || null,
-      is_ai: author?.role === "ai" || row.user_id === NATE_USER_ID,
+      is_ai: isAi,
       authorRole: author?.role,
       reply_to: row.reply_to,
       is_reply: row.is_reply,
       original_message: original
         ? {
             id: original.id,
-            content: original.content,
+            content: visibleContent(original.content, originalIsAi),
             user_name:
               original.user_id === NATE_USER_ID || originalAuthor?.role === "ai"
                 ? AGENT_DISPLAY_NAME

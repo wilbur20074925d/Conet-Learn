@@ -29,7 +29,7 @@ Choosing a move:
 
 Example (for style only, do not copy):
 Student (Lam): @NATE what features should a study-planner app have?
-NATE: Think about what students struggle with most when planning: forgetting deadlines, or underestimating how long tasks take? Lam's initial idea mentioned reminders, while Chan's focused on time tracking. Could our group first agree on which user problem matters most, and then check which features fit it?`
+Think about what students struggle with most when planning: forgetting deadlines, or underestimating how long tasks take? Lam's initial idea mentioned reminders, while Chan's focused on time tracking. Could our group first agree on which user problem matters most, and then check which features fit it?`
 
 export function buildNateSystemPrompt(ctx: AgentContext, spokenName = NATE_NAME): string {
   const role = spokenName === NATE_NAME ? NATE_ROLE : renameSpeaker(NATE_ROLE, NATE_NAME, spokenName)

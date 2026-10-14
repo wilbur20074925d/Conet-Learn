@@ -35,3 +35,16 @@ export function stripFigures(content: string): string {
     .trim()
 }
 
+const AGENT_SPEAKER_LABEL = /^(?:remy|nate)\s*:\s*/i
+
+/** Drops a leading "Remy:" / "Nate:" label the model sometimes echoes into the message body. */
+export function stripAgentSpeakerPrefix(content: string): string {
+  let text = content.trim()
+  let previous = ""
+  while (text && text !== previous) {
+    previous = text
+    text = text.replace(AGENT_SPEAKER_LABEL, "").trim()
+  }
+  return text
+}
+

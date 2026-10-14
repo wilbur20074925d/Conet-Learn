@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { EmojiPicker } from "@/components/ui/emoji-picker"
 import { ensureAgentOpeningMessage, finishNateReply, type Message } from "@/lib/actions"
 import { mapMessageRows, type RawMessage } from "@/lib/map-messages"
-import { AGENT_DISPLAY_NAME, NATE_MENTION_TEXT, NATE_THINKING, NATE_USER_ID, stripFigures } from "@/lib/nate"
+import { AGENT_DISPLAY_NAME, NATE_MENTION_TEXT, NATE_THINKING, NATE_USER_ID, stripAgentSpeakerPrefix, stripFigures } from "@/lib/nate"
 import {
   AWAY_WINDOW_MS,
   fetchSessionMessages,
@@ -909,8 +909,10 @@ function NateAvatar() {
 
 function NateThinkingCard() {
   return (
-    <div className="flex justify-start gap-2.5">
-      <NateAvatar />
+    <div className="flex w-full min-w-0 items-start justify-start gap-2.5">
+      <div className="sticky top-3 shrink-0">
+        <NateAvatar />
+      </div>
       <div
         className="rounded-2xl rounded-bl-md border border-slate-200 bg-white px-3.5 py-2.5 shadow-sm"
         role="status"
@@ -949,14 +951,15 @@ function NateReplyCard({
   reveal: boolean
   onReply?: () => void
 }) {
-  const [shown, setShown] = useState(reveal ? "" : content)
+  const replyText = stripAgentSpeakerPrefix(content) || content
+  const [shown, setShown] = useState(reveal ? "" : replyText)
   const [typing, setTyping] = useState(reveal)
   const [copied, setCopied] = useState(false)
   const cardRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!reveal) {
-      setShown(content)
+      setShown(replyText)
       setTyping(false)
       return
     }
@@ -965,24 +968,24 @@ function NateReplyCard({
     setShown("")
     const root = cardRef.current
     const timer = window.setInterval(() => {
-      index = nextTypedLength(content, index)
-      setShown(content.slice(0, index))
+      index = nextTypedLength(replyText, index)
+      setShown(replyText.slice(0, index))
       const scroller = root?.closest("[data-radix-scroll-area-viewport]")
       if (scroller instanceof HTMLElement) {
         const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
         if (distance < 96) scroller.scrollTop = scroller.scrollHeight
       }
-      if (index >= content.length) {
+      if (index >= replyText.length) {
         window.clearInterval(timer)
         setTyping(false)
       }
     }, 32)
     return () => window.clearInterval(timer)
-  }, [content, reveal])
+  }, [replyText, reveal])
 
   async function copyReply() {
     try {
-      await navigator.clipboard.writeText(content)
+      await navigator.clipboard.writeText(replyText)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1400)
     } catch {
@@ -991,9 +994,11 @@ function NateReplyCard({
   }
 
   return (
-    <div ref={cardRef} className="group flex justify-start gap-2.5">
-      <NateAvatar />
-      <div className="min-w-0 max-w-[min(92%,34rem)] flex-1 overflow-hidden rounded-2xl rounded-bl-md border border-slate-200 bg-white shadow-sm">
+    <div ref={cardRef} className="group flex w-full min-w-0 items-start justify-start gap-2.5">
+      <div className="sticky top-3 shrink-0">
+        <NateAvatar />
+      </div>
+      <div className="min-w-0 max-w-[min(34rem,calc(100%_-_3rem))] flex-1 overflow-hidden rounded-2xl rounded-bl-md border border-slate-200 bg-white shadow-sm">
         <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-1.5">
           <div className="flex items-center gap-1.5">
             <span className="text-xs font-semibold text-slate-800">{AGENT_DISPLAY_NAME}</span>
@@ -1015,8 +1020,8 @@ function NateReplyCard({
         </div>
         <div className="px-3 py-2.5 text-[15px] leading-relaxed text-slate-900">
           {quote && (
-            <div className="mb-2 border-l-2 border-slate-300 pl-2 text-xs text-slate-500">
-              <p className="font-medium">{quote.user_name}</p>
+            <div className="mb-2 min-w-0 overflow-hidden border-l-2 border-slate-300 pl-2 text-xs text-slate-500">
+              <p className="truncate font-medium">{quote.user_name}</p>
               <p className="truncate">{stripFigures(quote.content) || "Shared a figure"}</p>
             </div>
           )}
@@ -1044,15 +1049,35 @@ function NateReplyCard({
   )
 }
 
+function sameAuthorText(a: Message, b: Message) {
+  return a.user_id === b.user_id && a.content === b.content
+}
+
 function upsertLiveMessages(prev: Message[], incoming: Message[]) {
   if (incoming.length === 0) return prev
   let next = prev
   for (const message of incoming) {
+    const saved = !isTempMessageId(message.id)
+    const tempIndex = saved
+      ? next.findIndex((item) => isTempMessageId(item.id) && sameAuthorText(item, message))
+      : -1
+    if (tempIndex >= 0) {
+      next = next.map((item, index) => (index === tempIndex ? { ...item, ...message } : item))
+      continue
+    }
+    if (isTempMessageId(message.id) && next.some((item) => !isTempMessageId(item.id) && sameAuthorText(item, message))) {
+      continue
+    }
     const index = next.findIndex((item) => item.id === message.id)
     if (index === -1) next = [...next, message]
     else next = next.map((item, itemIndex) => (itemIndex === index ? { ...item, ...message } : item))
   }
-  return next.sort((a, b) => a.created_at.localeCompare(b.created_at))
+  return next
+    .filter((message, _, all) => {
+      if (!isTempMessageId(message.id)) return true
+      return !all.some((other) => !isTempMessageId(other.id) && sameAuthorText(other, message))
+    })
+    .sort((a, b) => a.created_at.localeCompare(b.created_at))
 }
 
 function withPending(prev: Message[], latest: Message[]) {
@@ -1727,8 +1752,8 @@ export default function ChatPanel({
         </div>
       </header>
 
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-4 px-5 py-5">
+      <ScrollArea className="min-h-0 w-full flex-1 [&_[data-radix-scroll-area-viewport]>div]:!block [&_[data-radix-scroll-area-viewport]>div]:!w-full [&_[data-radix-scroll-area-viewport]>div]:!min-w-0">
+        <div className="w-full min-w-0 space-y-4 px-5 py-5">
           {!messagesLoaded && visibleMessages.length === 0 && (
             <div className="space-y-3" aria-hidden="true">
               <div className="h-16 animate-pulse rounded-2xl bg-slate-100" />
@@ -1762,28 +1787,33 @@ export default function ChatPanel({
               )
             }
             return (
-              <div key={msg.id} className={`group flex ${mine ? "justify-end" : "justify-start"}`}>
-                <div className={`flex max-w-[min(100%,34rem)] gap-3 ${mine ? "flex-row-reverse" : ""} ${pending ? "opacity-80" : ""}`}>
-                  <div className="mt-1">
+              <div key={msg.id} className={`group flex w-full min-w-0 ${mine ? "justify-end" : "justify-start"}`}>
+                <div className={`flex min-w-0 max-w-full items-start gap-3 ${mine ? "flex-row-reverse" : ""} ${pending ? "opacity-80" : ""}`}>
+                  <div className="sticky top-3 mt-1 shrink-0">
                     <StudentFigureAvatar
                       figureIndex={studentFigureIndexFor(msg.user_id)}
                       title={msg.name}
                     />
                   </div>
                   <div
-                    className={`rounded-2xl px-4 py-3 ${
+                    className={`min-w-0 max-w-[min(34rem,calc(100%_-_3rem))] overflow-hidden rounded-2xl px-4 py-3 ${
                       mine
                         ? "bg-slate-900 text-white"
                         : "border border-slate-200 bg-slate-50 text-slate-900"
                     }`}
                   >
                     {msg.original_message && (
-                      <div className={`mb-2 border-l-2 pl-2 text-xs ${mine ? "border-white/40 text-white/80" : "border-slate-300 text-slate-500"}`}>
-                        <p className="font-medium">{msg.original_message.user_name}</p>
+                      <div className={`mb-2 min-w-0 overflow-hidden border-l-2 pl-2 text-xs ${mine ? "border-white/40 text-white/80" : "border-slate-300 text-slate-500"}`}>
+                        <p className="truncate font-medium">{msg.original_message.user_name}</p>
                         <p className="truncate">{stripFigures(msg.original_message.content) || "Shared a figure"}</p>
                       </div>
                     )}
-                    <MessageContent content={msg.content} mentionNames={mentionNames} inverted={mine} />
+                    <MessageContent
+                      content={msg.content}
+                      mentionNames={mentionNames}
+                      inverted={mine}
+                      className="min-w-0 break-words text-sm leading-relaxed [overflow-wrap:anywhere]"
+                    />
                     <div className="mt-2 flex items-center justify-between gap-3">
                       <p className={`text-[11px] font-medium ${mine ? "text-white/70" : "text-slate-400"}`}>
                         {msg.name}

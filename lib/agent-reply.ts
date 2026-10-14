@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js"
 import { buildNateSystemPrompt } from "@/components/prompt design/nate-prompt"
 import { buildRemySystemPrompt } from "@/components/prompt design/remy-prompt"
 import { MODEL_SETTINGS, type AgentContext } from "@/components/prompt design/shared"
-import { AGENT_DISPLAY_NAME, NATE_THINKING, NATE_USER_ID, stripFigures, type NateMode } from "./nate"
+import { AGENT_DISPLAY_NAME, NATE_THINKING, NATE_USER_ID, stripAgentSpeakerPrefix, stripFigures, type NateMode } from "./nate"
 
 type HistoryTurn = {
   user_id: string
@@ -122,10 +122,14 @@ export async function requestNateReply(
     lastTurn &&
     lastTurn.user_id !== NATE_USER_ID &&
     stripFigures(lastTurn.content) === stripFigures(userMessage)
-  const conversation: Array<{ role: string; content: ChatContent }> = (repeated ? turns.slice(0, -1) : turns).map((msg) => ({
-      role: msg.user_id === NATE_USER_ID ? "assistant" : "user",
-      content: `${msg.user_id === NATE_USER_ID ? AGENT_DISPLAY_NAME : msg.name}: ${stripFigures(msg.content) || "shared a figure."}`,
-    }))
+  const conversation: Array<{ role: string; content: ChatContent }> = (repeated ? turns.slice(0, -1) : turns).map((msg) => {
+    const body = stripFigures(msg.content) || "shared a figure."
+    const fromAgent = msg.user_id === NATE_USER_ID
+    return {
+      role: fromAgent ? "assistant" : "user",
+      content: fromAgent ? stripAgentSpeakerPrefix(body) || body : `${msg.name}: ${body}`,
+    }
+  })
 
   const asked = stripFigures(userMessage) || "Please read this figure and tell us what you notice."
   const question = figures.length
@@ -174,7 +178,8 @@ export async function requestNateReply(
     }
 
     const data = await response.json()
-    return data.choices?.[0]?.message?.content || "I'm not sure how to respond to that."
+    const raw = String(data.choices?.[0]?.message?.content || "I'm not sure how to respond to that.")
+    return stripAgentSpeakerPrefix(raw) || raw
   } catch (error) {
     console.error("Error calling ZenMux API:", error)
     return "Sorry, I encountered an error while processing your request."

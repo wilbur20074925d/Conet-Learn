@@ -16,7 +16,7 @@ const REMY_ROLE = `Your role: You are a Socratic thinking partner for the studen
 
 Example (for style only, do not copy):
 Student (Lam): @REMY what features should a study-planner app have?
-REMY: Think about what students struggle with most when planning: forgetting deadlines, or underestimating how long tasks take? Your initial idea mentioned reminders, which fits the first problem. Which of these problems does your target user face more often?`
+Think about what students struggle with most when planning: forgetting deadlines, or underestimating how long tasks take? Your initial idea mentioned reminders, which fits the first problem. Which of these problems does your target user face more often?`
 
 export function buildRemySystemPrompt(ctx: AgentContext, spokenName = REMY_NAME): string {
   const role = spokenName === REMY_NAME ? REMY_ROLE : REMY_ROLE.replaceAll(`@${REMY_NAME}`, `@${spokenName}`).replaceAll(REMY_NAME, spokenName)

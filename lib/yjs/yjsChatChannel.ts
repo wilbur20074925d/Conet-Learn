@@ -99,9 +99,11 @@ class ChatRoom {
     const json = JSON.stringify(message)
     const existing = this.find(message.id)
     if (existing?.get("json") === json) return
+    const pending = existing || this.findPending(message)
     this.doc.transact(() => {
-      if (existing) {
-        existing.set("json", json)
+      if (pending) {
+        pending.set("id", message.id)
+        pending.set("json", json)
         return
       }
       const entry = new Y.Map<string>()
@@ -133,6 +135,23 @@ class ChatRoom {
 
   private find(id: string) {
     return this.messages.toArray().find((entry) => entry.get("id") === id)
+  }
+
+  /** The optimistic copy of a message that has now been saved. */
+  private findPending(message: Message) {
+    if (message.id.startsWith("temp-")) return undefined
+    return this.messages.toArray().find((entry) => {
+      const id = entry.get("id") || ""
+      if (!id.startsWith("temp-")) return false
+      const raw = entry.get("json")
+      if (!raw) return false
+      try {
+        const current = JSON.parse(raw) as Message
+        return current.user_id === message.user_id && current.content === message.content
+      } catch {
+        return false
+      }
+    })
   }
 }
 
