@@ -258,16 +258,22 @@ function SessionHeader({
   groupCount: number
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 bg-white px-3 py-2.5 sm:gap-3 sm:px-4">
-      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">
-        {index + 1}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Session</p>
-        <h3 className="truncate text-base font-bold tracking-tight text-slate-900">{session.title}</h3>
+    <div className="space-y-2 border-b border-slate-100 bg-white px-3 py-3 sm:px-4">
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">
+            {index + 1}
+          </span>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Session</p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          <p className="text-xs font-medium text-slate-500">{groupLabel(groupCount)}</p>
+          {showMaterials && <SessionMaterialsButton role={role} sessionId={session.id} compact />}
+        </div>
       </div>
-      <p className="text-xs font-medium text-slate-500">{groupLabel(groupCount)}</p>
-      {showMaterials && <SessionMaterialsButton role={role} sessionId={session.id} compact />}
+      <h3 className="text-pretty text-base font-bold leading-snug tracking-tight text-slate-900 sm:text-[17px]">
+        {session.title}
+      </h3>
     </div>
   )
 }

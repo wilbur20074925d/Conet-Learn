@@ -1126,7 +1126,6 @@ export default function ChatPanel({
   const [liveUsers, setLiveUsers] = useState<SessionUser[]>([])
   const [dbUsers, setDbUsers] = useState<SessionUser[]>([])
   const [groupPeople, setGroupPeople] = useState<MentionPerson[]>([])
-  const [linkStatus, setLinkStatus] = useState<"live" | "reconnecting">("live")
   const [tabHidden, setTabHidden] = useState(false)
   const [sendNotes, setSendNotes] = useState<Record<string, string>>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -1492,13 +1491,11 @@ export default function ChatPanel({
         if (stopped) return
         if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
           roomReady = false
-          setLinkStatus("reconnecting")
           return
         }
         if (status !== "SUBSCRIBED") return
         const recover = joinedBefore
         joinedBefore = true
-        setLinkStatus("live")
         if (document.visibilityState === "hidden") return
         void (async () => {
           if (!readOnly) {
@@ -1707,21 +1704,7 @@ export default function ChatPanel({
     <section className="flex h-full min-h-0 flex-col bg-white">
       <header className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="shrink-0">
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl font-bold tracking-tight text-slate-900">{groupName}</h2>
-            <span
-              className={`inline-flex items-center gap-1 text-[11px] font-semibold ${
-                linkStatus === "live" ? "text-brand-green" : "text-amber-600"
-              }`}
-            >
-              <span
-                className={`h-1.5 w-1.5 rounded-full ${
-                  linkStatus === "live" ? "animate-pulse bg-brand-green" : "bg-amber-500"
-                }`}
-              />
-              {linkStatus === "live" ? "Live" : "Reconnecting"}
-            </span>
-          </div>
+          <h2 className="text-xl font-bold tracking-tight text-slate-900">{groupName}</h2>
           <p className="text-xs text-slate-500">{visibleMessages.length} messages</p>
         </div>
         <div className="flex min-w-0 flex-1 flex-col items-start gap-1.5 sm:items-end">

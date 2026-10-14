@@ -24,6 +24,7 @@ import TableRow from '@tiptap/extension-table-row';
 import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
 import { Extension, Mark, mergeAttributes } from '@tiptap/core';
+import { ConetAuthorMark, createAuthorStampPlugin } from '@/lib/collaborative-author-mark';
 import * as Y from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import {
@@ -1438,6 +1439,17 @@ export const CollaborativeNoteEditor: React.FC<CollaborativeNoteEditorProps> = (
     [user.userId, user.name, user.color, user.figureIndex],
   );
 
+  const authorStampExtension = useMemo(
+    () =>
+      Extension.create({
+        name: 'conetAuthorStamp',
+        addProseMirrorPlugins() {
+          return [createAuthorStampPlugin(user.userId, user.name)];
+        },
+      }),
+    [user.userId, user.name],
+  );
+
   const extensions = useMemo(
     () => [
       StarterKit.configure({
@@ -1479,6 +1491,8 @@ export const CollaborativeNoteEditor: React.FC<CollaborativeNoteEditorProps> = (
       TableHeader,
       TableCell,
       CommentMark,
+      ConetAuthorMark,
+      authorStampExtension,
       Placeholder.configure({ placeholder }),
       Collaboration.configure({
         document: ydoc,
@@ -1494,7 +1508,7 @@ export const CollaborativeNoteEditor: React.FC<CollaborativeNoteEditorProps> = (
           ]
         : []),
     ],
-    [ydoc, awareness, awarenessUser, placeholder, publishPresence]
+    [ydoc, awareness, awarenessUser, placeholder, publishPresence, authorStampExtension]
   );
 
   const editor = useEditor(

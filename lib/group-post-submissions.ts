@@ -1,6 +1,11 @@
 "use server"
 
 import { getSessionContext } from "@/lib/actions"
+import {
+  embedGroupPostSubmitMeta,
+  parseGroupPostSubmitMeta,
+  type GroupPostSubmitMeta,
+} from "@/lib/group-post-submit-meta"
 import { inGroup } from "@/lib/session-membership"
 import { createClient } from "@/lib/supabase/server"
 
@@ -54,14 +59,17 @@ export async function listGroupPostSubmissions(groupId: string): Promise<{
   }
 
   return {
-    submissions: (rows.data || []).map((row) => ({
-      id: row.id as string,
-      title: (row.title as string) || "Group document",
-      html: (row.content as string) || "",
-      createdAt: row.created_at as string,
-      authorId: row.user_id as string,
-      authorName: names.get(row.user_id as string) || "Student",
-    })),
+    submissions: (rows.data || []).map((row) => {
+      const parsed = parseGroupPostSubmitMeta((row.content as string) || "")
+      return {
+        id: row.id as string,
+        title: (row.title as string) || "Group document",
+        html: parsed.html,
+        createdAt: row.created_at as string,
+        authorId: row.user_id as string,
+        authorName: names.get(row.user_id as string) || "Student",
+      }
+    }),
   }
 }
 
@@ -70,6 +78,7 @@ export async function submitGroupPost(input: {
   noteId: string
   title: string
   html: string
+  meta?: GroupPostSubmitMeta
 }): Promise<{ ok: true } | { ok: false; error: string }> {
   const session = await getSessionContext()
   if (!session.ok) return { ok: false, error: session.error }
@@ -78,13 +87,15 @@ export async function submitGroupPost(input: {
   const text = input.html.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ").trim()
   if (!text) return { ok: false, error: "Write something in the group post before submitting." }
 
+  const content = input.meta ? embedGroupPostSubmitMeta(input.html, input.meta) : input.html
+
   const supabase = await createClient()
   const inserted = await supabase.from("ConetGroupPostSubmissions").insert({
     group_id: input.groupId,
     note_id: input.noteId,
     user_id: session.ctx.profileId,
     title: input.title.trim() || "Group document",
-    content: input.html,
+    content,
   })
 
   if (inserted.error) {

@@ -1,13 +1,18 @@
 "use client"
 
 import { FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
+import Image from "next/image"
 import { useRouter } from "next/navigation"
-import { ArrowRight, Copy, Pencil, Plus, Trash2 } from "lucide-react"
+import { ArrowRight, ChevronDown, Copy, Layers, Pencil, Plus, Trash2, Users } from "lucide-react"
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import createIllustration from "@/components/figure/Create.png"
+import { cn } from "@/lib/utils"
 import NateModeSwitch from "@/components/nate-mode-switch"
 import PendingLink from "@/components/pending-link"
 import SessionArtwork, { artworkIndexes } from "@/components/session-artwork"
 import ManageStudentsDialog, { type ManageStudent } from "@/components/manage-students-dialog"
 import SessionMaterialsButton from "@/components/session-materials-button"
+import TeacherExportDataDialog from "@/components/teacher-export-data-dialog"
 import {
   Dialog,
   DialogContent,
@@ -359,6 +364,86 @@ function copySession(session: CatalogSession, classId: string, title: string): C
   }
 }
 
+type CreateKind = "class" | "session" | "group" | "duplicate"
+
+const CREATE_FLOW: Record<
+  CreateKind,
+  { step: number; items: { label: string; hint: string; icon: typeof Layers }[] }
+> = {
+  class: {
+    step: 0,
+    items: [
+      { label: "Class", hint: "Name it", icon: Layers },
+      { label: "Sessions", hint: "Add next", icon: Plus },
+      { label: "Groups", hint: "Per session", icon: Users },
+    ],
+  },
+  session: {
+    step: 1,
+    items: [
+      { label: "Class", hint: "Ready", icon: Layers },
+      { label: "Session", hint: "Name it", icon: Plus },
+      { label: "Groups", hint: "Add next", icon: Users },
+    ],
+  },
+  group: {
+    step: 2,
+    items: [
+      { label: "Class", hint: "Set", icon: Layers },
+      { label: "Session", hint: "Set", icon: Plus },
+      { label: "Group", hint: "Name it", icon: Users },
+    ],
+  },
+  duplicate: {
+    step: 1,
+    items: [
+      { label: "Structure", hint: "Copied", icon: Copy },
+      { label: "Students", hint: "Stay put", icon: Users },
+      { label: "Materials", hint: "Included", icon: Layers },
+    ],
+  },
+}
+
+function CreateFlowStrip({ kind, entered }: { kind: CreateKind; entered: boolean }) {
+  const flow = CREATE_FLOW[kind]
+  return (
+    <ol
+      className={cn(
+        "grid grid-cols-3 gap-1.5 rounded-xl border border-neutral-200 bg-neutral-50/90 p-2",
+        entered && "animate-welcome-fade-up",
+      )}
+      style={entered ? { animationDelay: "160ms" } : undefined}
+    >
+      {flow.items.map((item, index) => {
+        const StepIcon = item.icon
+        const active = index === flow.step
+        return (
+          <li
+            key={item.label}
+            className={cn(
+              "flex flex-col items-center rounded-lg px-1 py-2 text-center transition-colors",
+              active ? "bg-neutral-950 text-white shadow-sm" : "text-neutral-600",
+            )}
+          >
+            <span
+              className={cn(
+                "mb-1 flex h-7 w-7 items-center justify-center rounded-lg border",
+                active ? "border-white/20 bg-white/10" : "border-neutral-200 bg-white",
+              )}
+            >
+              <StepIcon className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+            </span>
+            <span className="text-[10px] font-bold uppercase tracking-wide">{item.label}</span>
+            <span className={cn("mt-0.5 text-[9px] font-medium leading-tight", active ? "text-white/75" : "text-neutral-400")}>
+              {item.hint}
+            </span>
+          </li>
+        )
+      })}
+    </ol>
+  )
+}
+
 function CreateDialog({
   label,
   title,
@@ -369,6 +454,8 @@ function CreateDialog({
   submitLabel = "Create",
   tone = "primary",
   icon = "plus",
+  kind = "class",
+  fieldLabel,
 }: {
   label: string
   title: string
@@ -379,10 +466,25 @@ function CreateDialog({
   submitLabel?: string
   tone?: "primary" | "quiet"
   icon?: "plus" | "copy"
+  kind?: CreateKind
+  fieldLabel?: string
 }) {
   const [open, setOpen] = useState(false)
   const [value, setValue] = useState("")
+  const [entered, setEntered] = useState(false)
   const Icon = icon === "copy" ? Copy : Plus
+  const flowKind: CreateKind = icon === "copy" ? "duplicate" : kind
+  const nameLabel =
+    fieldLabel || (kind === "class" ? "Class name" : kind === "session" ? "Session name" : kind === "group" ? "Group name" : "Name")
+
+  useEffect(() => {
+    if (!open) {
+      setEntered(false)
+      return
+    }
+    const frame = requestAnimationFrame(() => setEntered(true))
+    return () => cancelAnimationFrame(frame)
+  }, [open])
 
   function close() {
     setOpen(false)
@@ -409,47 +511,93 @@ function CreateDialog({
         onClick={openDialog}
         className={
           tone === "quiet"
-            ? "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 transition hover:bg-slate-50"
-            : "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-slate-900 px-3 text-xs font-semibold text-white transition hover:bg-slate-800"
+            ? "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-neutral-200 bg-white px-3 text-xs font-semibold text-neutral-800 transition hover:border-neutral-300 hover:bg-neutral-50"
+            : "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-neutral-950 bg-neutral-950 px-3 text-xs font-semibold text-white transition hover:bg-neutral-800"
         }
       >
         <Icon className="h-3.5 w-3.5" />
         {label}
       </button>
       <Dialog open={open} onOpenChange={(next) => (next ? openDialog() : close())}>
-        <DialogContent className="max-w-sm gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">
-          <div className="border-b border-slate-100 px-5 pb-4 pt-5 pr-12">
-            <DialogHeader className="space-y-1 text-left">
-              <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">{title}</DialogTitle>
-              <DialogDescription className="text-sm leading-6 text-slate-500">{description}</DialogDescription>
-            </DialogHeader>
+        <DialogContent
+          className={cn(
+            "max-h-[calc(100dvh-1.25rem)] w-[calc(100%-1.5rem)] max-w-md gap-0 overflow-y-auto rounded-2xl border-neutral-200 bg-white p-0 shadow-[0_28px_70px_-32px_rgba(0,0,0,0.45)]",
+            "[&>button]:z-20 [&>button]:rounded-full [&>button]:border [&>button]:border-neutral-200 [&>button]:bg-white [&>button]:text-neutral-900 [&>button]:shadow-sm [&>button]:transition-transform [&>button]:hover:scale-105",
+          )}
+        >
+          <div className="relative shrink-0 border-b border-neutral-200 bg-neutral-50/80 px-4 py-3 pr-11">
+            <div
+              className="pointer-events-none absolute inset-0 opacity-[0.35]"
+              style={{
+                backgroundImage:
+                  "linear-gradient(to right, rgba(0,0,0,0.04) 1px, transparent 1px), linear-gradient(to bottom, rgba(0,0,0,0.04) 1px, transparent 1px)",
+                backgroundSize: "20px 20px",
+              }}
+              aria-hidden
+            />
+            <div className="relative z-10 flex items-start gap-3">
+              <div className={cn("w-[72px] shrink-0", entered && "animate-welcome-float")}>
+                <Image
+                  src={createIllustration}
+                  alt=""
+                  className="h-auto w-full grayscale contrast-[1.06] brightness-[1.02]"
+                  priority
+                />
+              </div>
+              <DialogHeader className="min-w-0 flex-1 space-y-0.5 text-left">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-400">Teacher setup</p>
+                <DialogTitle className="text-balance text-lg font-bold leading-tight tracking-tight text-neutral-950">
+                  {title}
+                </DialogTitle>
+                <DialogDescription className="text-xs leading-snug text-neutral-500">{description}</DialogDescription>
+              </DialogHeader>
+            </div>
           </div>
-          <form onSubmit={onSubmit} className="space-y-4 px-5 py-4">
-            <label className="block">
-              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Name</span>
+
+          <form onSubmit={onSubmit} className="space-y-3 px-4 py-3 sm:px-4">
+            <CreateFlowStrip kind={flowKind} entered={entered} />
+
+            <label
+              className={cn("block", entered && "animate-welcome-fade-up")}
+              style={entered ? { animationDelay: "220ms" } : undefined}
+            >
+              <span className="text-[11px] font-semibold uppercase tracking-[0.14em] text-neutral-400">{nameLabel}</span>
               <input
                 value={value}
                 onChange={(event) => setValue(event.target.value)}
                 placeholder={placeholder}
                 maxLength={80}
                 autoFocus
-                className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/10"
+                className="mt-1.5 h-10 w-full rounded-xl border border-neutral-200 bg-white px-3 text-sm outline-none transition focus:border-neutral-950 focus:ring-2 focus:ring-neutral-950/10"
               />
             </label>
-            <div className="flex justify-end gap-2">
+
+            <div
+              className={cn("flex justify-end gap-2 border-t border-neutral-100 pt-3", entered && "animate-welcome-fade-up")}
+              style={entered ? { animationDelay: "280ms" } : undefined}
+            >
               <button
                 type="button"
                 onClick={close}
-                className="h-9 rounded-xl px-3 text-sm font-semibold text-slate-600 hover:bg-slate-100"
+                className="h-9 rounded-xl px-3 text-sm font-semibold text-neutral-600 transition hover:bg-neutral-100"
               >
                 Cancel
               </button>
               <button
                 type="submit"
                 disabled={!value.trim()}
-                className="h-9 rounded-xl bg-slate-900 px-3.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                className="group relative h-9 overflow-hidden rounded-xl border border-neutral-950 bg-neutral-950 px-3.5 text-sm font-semibold text-white transition hover:bg-neutral-800 disabled:opacity-50"
               >
-                {submitLabel}
+                <span
+                  className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:animate-welcome-shimmer group-hover:opacity-100"
+                  style={{
+                    background:
+                      "linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.12) 50%, transparent 60%)",
+                    backgroundSize: "200% 100%",
+                  }}
+                  aria-hidden
+                />
+                <span className="relative">{submitLabel}</span>
               </button>
             </div>
           </form>
@@ -482,9 +630,9 @@ function NameEditor({ value, onSave }: { value: string; onSave: (next: string) =
 
   return (
     <>
-      <button type="button" onClick={openDialog} className="inline-flex min-w-0 items-center gap-1.5 text-left">
-        <span className="truncate">{value}</span>
-        <Pencil className="h-3.5 w-3.5 shrink-0 text-slate-400" />
+      <button type="button" onClick={openDialog} className="inline-flex min-w-0 items-start gap-1.5 text-left">
+        <span className="min-w-0 text-pretty break-words">{value}</span>
+        <Pencil className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neutral-400" />
       </button>
       <Dialog open={open} onOpenChange={(next) => (next ? openDialog() : close())}>
         <DialogContent className="max-w-sm gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">
@@ -692,9 +840,10 @@ export default function TeacherClassBoard({
             }}
           />
           <CreateDialog
+            kind="group"
             label="Create group"
             title="Create group"
-            description={`This group will be added inside ${session.title}.`}
+            description={`Add a group inside “${session.title}”, then place students in it.`}
             placeholder="Group name"
             onCreate={(name) => {
               if (stillSaving(session.id)) return
@@ -705,9 +854,10 @@ export default function TeacherClassBoard({
             }}
           />
           <CreateDialog
+            kind="session"
             label="Duplicate"
             title="Duplicate session"
-            description={`Copies the groups and materials in ${session.title} into ${classroom.name}. Students and chat stay in the original. Place students in the copy yourself.`}
+            description={`Copy groups and materials from “${session.title}”. Students and chat stay in the original.`}
             placeholder="Session name"
             initialValue={`Copy of ${session.title}`.slice(0, 80)}
             submitLabel="Duplicate"
@@ -741,13 +891,21 @@ export default function TeacherClassBoard({
         </div>
 
         <div className="mt-3">
-          <StudentRoster students={session.students} empty="No students in this session yet." />
+          <StudentRoster
+            students={studentsNotInSessionGroups(session)}
+            variant="unassigned"
+            empty={
+              session.students.length === 0
+                ? "No students in this session yet."
+                : "Everyone in this session is placed in a group."
+            }
+          />
         </div>
 
         {session.groups.length === 0 ? (
           <p className="mt-3 text-sm text-slate-500">No groups in this session yet.</p>
         ) : (
-          <ul className="mt-3 grid gap-3 lg:grid-cols-2">
+          <ul className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {session.groups.map((group) => (
               <GroupCard
                 key={group.id}
@@ -783,6 +941,7 @@ export default function TeacherClassBoard({
                     title={`Manage students in ${group.name}`}
                     description="Add students from this session, or move them out of this group. Each student can be in one group for this session."
                     context="group"
+                    compactTrigger
                     currentCourseName={classroom.name}
                     available={manageStudents(
                       session.students
@@ -842,21 +1001,25 @@ export default function TeacherClassBoard({
             Place each student in one class. Inside that class, place them in one or more sessions, then in one group for each session.
           </p>
         </div>
-        <CreateDialog
-          label="Create class"
-          title="Create class"
-          description="Give the class a name. You can add sessions and groups after it is created."
-          placeholder="Class name"
-          onCreate={(name) =>
-            perform(
-              {
-                type: "add-class",
-                classroom: { id: tempId(), name, createdAt: new Date().toISOString(), students: [], sessions: [] },
-              },
-              () => createClass(name)
-            )
-          }
-        />
+        <div className="flex flex-wrap items-center gap-2">
+          <TeacherExportDataDialog classes={board.classes} looseGroups={board.looseGroups} />
+          <CreateDialog
+            kind="class"
+            label="Create class"
+            title="Create class"
+            description="Name the class first. Then add sessions and groups inside it."
+            placeholder="Class name"
+            onCreate={(name) =>
+              perform(
+                {
+                  type: "add-class",
+                  classroom: { id: tempId(), name, createdAt: new Date().toISOString(), students: [], sessions: [] },
+                },
+                () => createClass(name)
+              )
+            }
+          />
+        </div>
       </div>
 
       {board.classes.length === 0 && board.looseGroups.length === 0 && (
@@ -917,9 +1080,10 @@ export default function TeacherClassBoard({
                 }}
               />
               <CreateDialog
+                kind="session"
                 label="Create session"
                 title="Create session"
-                description={`This session will be added inside ${classroom.name}.`}
+                description={`Add a session inside “${classroom.name}”, then create groups for it.`}
                 placeholder="Session name"
                 onCreate={(title) => {
                   if (stillSaving(classroom.id)) return
@@ -941,9 +1105,10 @@ export default function TeacherClassBoard({
                 }}
               />
               <CreateDialog
+                kind="class"
                 label="Duplicate"
                 title="Duplicate class"
-                description={`Copies the sessions, groups, and materials in ${classroom.name}. Students and chat stay in the original. Place students in the copy yourself.`}
+                description={`Copy sessions, groups, and materials from “${classroom.name}”. Students stay in the original.`}
                 placeholder="Class name"
                 initialValue={`Copy of ${classroom.name}`.slice(0, 80)}
                 submitLabel="Duplicate"
@@ -1007,7 +1172,7 @@ export default function TeacherClassBoard({
       {board.looseGroups.length > 0 && (
         <section className="mt-8">
           <h2 className="text-lg font-bold tracking-tight text-slate-900">Groups not in a session</h2>
-          <ul className="mt-3 grid gap-3 lg:grid-cols-2">
+          <ul className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {board.looseGroups.map((group) => (
               <li key={group.id} className="rounded-2xl border border-slate-200 bg-white p-4">
                 <p className="font-bold text-slate-900">{group.name}</p>
@@ -1100,35 +1265,140 @@ export default function TeacherClassBoard({
   )
 }
 
+function studentsNotInSessionGroups(session: CatalogSession): CatalogStudent[] {
+  const inGroup = new Set<string>()
+  for (const group of session.groups) {
+    for (const member of group.members) {
+      inGroup.add(member.id)
+    }
+  }
+  return session.students.filter((student) => !inGroup.has(student.id))
+}
+
 function rosterInitials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean)
   if (parts.length === 0) return "?"
-  if (parts.length === 1) return parts[0].slice(0, 1).toUpperCase()
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase()
   return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
 }
 
-function StudentRoster({ students, empty }: { students: CatalogStudent[]; empty: string }) {
+function RosterStudentCard({ student }: { student: CatalogStudent }) {
+  return (
+    <li className="flex min-w-0 items-center gap-2 rounded-xl border border-neutral-100 bg-neutral-50/60 px-2 py-1.5 transition hover:border-neutral-300 hover:bg-white">
+      <span
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-neutral-950 text-[9px] font-bold leading-none text-white"
+        title={student.name}
+      >
+        {rosterInitials(student.name)}
+      </span>
+      <span className="min-w-0 flex-1 text-pretty text-xs font-medium leading-snug text-neutral-900 sm:text-[13px]">
+        {student.name}
+      </span>
+    </li>
+  )
+}
+
+function StudentRoster({
+  students,
+  empty,
+  variant = "default",
+}: {
+  students: CatalogStudent[]
+  empty: string
+  variant?: "default" | "unassigned"
+}) {
+  const isUnassigned = variant === "unassigned"
+  const header = isUnassigned
+    ? {
+        title: "Not in a group",
+        hint: "Place them using Manage students on a group below.",
+      }
+    : {
+        title: "Students in this class",
+        hint: "Enrolled here — assign to sessions and groups below.",
+      }
+
   if (students.length === 0) {
     return (
-      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-3 text-sm text-slate-500">
+      <div className="rounded-2xl border border-dashed border-neutral-200 bg-neutral-50/80 px-3 py-3 text-sm text-neutral-500">
         {empty}
       </div>
     )
   }
+
   return (
-    <ul className="flex flex-wrap gap-2">
-      {students.map((student) => (
-        <li
-          key={student.id}
-          className="inline-flex max-w-full items-center gap-2 rounded-full border border-slate-200/80 bg-white py-1 pl-1 pr-3 text-sm shadow-sm"
-        >
-          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-[10px] font-bold text-slate-600">
-            {rosterInitials(student.name)}
+    <Collapsible defaultOpen={false} className="overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm">
+      <CollapsibleTrigger
+        className={cn(
+          "group flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-neutral-50 sm:px-3.5",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-950/15 focus-visible:ring-offset-2",
+        )}
+      >
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neutral-200 bg-neutral-50 text-neutral-700">
+          <Users className="h-4 w-4" strokeWidth={2} aria-hidden />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">{header.title}</span>
+          <span className="mt-0.5 block text-xs font-medium text-neutral-800">
+            {students.length} {students.length === 1 ? "student" : "students"}
+            <span className="font-normal text-neutral-400 group-data-[state=open]:hidden"> · Click to expand</span>
+            <span className="hidden font-normal text-neutral-400 group-data-[state=open]:inline"> · Click to fold</span>
           </span>
-          <span className="truncate font-medium text-slate-800">{student.name}</span>
-        </li>
-      ))}
-    </ul>
+        </span>
+        <span className="shrink-0 rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-0.5 text-[10px] font-bold tabular-nums text-neutral-800">
+          {students.length}
+        </span>
+        <ChevronDown
+          className="h-4 w-4 shrink-0 text-neutral-400 transition-transform duration-200 group-data-[state=open]:rotate-180"
+          aria-hidden
+        />
+      </CollapsibleTrigger>
+
+      <CollapsibleContent className="border-t border-neutral-100 data-[state=closed]:animate-accordion-up data-[state=open]:animate-accordion-down">
+        <p className="border-b border-neutral-50 bg-neutral-50/60 px-3 py-2 text-[11px] leading-snug text-neutral-400 sm:px-3.5">
+          {header.hint}
+        </p>
+        <ul
+          className={cn(
+            "grid gap-1.5 p-2.5 sm:p-3",
+            isUnassigned
+              ? "max-h-48 overflow-y-auto sm:grid-cols-2 lg:grid-cols-3"
+              : "max-h-56 overflow-y-auto sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4",
+          )}
+        >
+          {students.map((student) => (
+            <RosterStudentCard key={student.id} student={student} />
+          ))}
+        </ul>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+function GroupMemberRow({
+  name,
+  onRemove,
+}: {
+  name: string
+  onRemove: () => void
+}) {
+  return (
+    <li className="flex min-w-0 items-center gap-2 rounded-lg border border-neutral-100 bg-white/90 px-2 py-1.5">
+      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-neutral-950 text-[9px] font-bold leading-none text-white">
+        {rosterInitials(name)}
+      </span>
+      <p className="min-w-0 flex-1 text-pretty text-xs font-medium leading-snug text-neutral-900">
+        {name}
+      </p>
+      <button
+        type="button"
+        onClick={onRemove}
+        className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-neutral-200 bg-white text-sm font-semibold text-neutral-600 transition hover:border-red-200 hover:bg-red-50 hover:text-red-700"
+        aria-label={`Remove ${name}`}
+      >
+        ×
+      </button>
+    </li>
   )
 }
 
@@ -1149,68 +1419,80 @@ function GroupCard({
   opening?: boolean
   place?: ReactNode
 }) {
+  const memberCount = group.members.length
+
   return (
-    <li className="rounded-2xl border border-slate-200 bg-white p-4 transition duration-200 hover:border-slate-300 hover:shadow-sm">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Group</p>
-          <h4 className="mt-1 text-lg font-bold tracking-tight text-slate-900">
-            <NameEditor value={group.name} onSave={onRename} />
-          </h4>
+    <li className="flex flex-col overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm transition duration-200 hover:border-neutral-300 hover:shadow-md">
+      <div className="border-b border-neutral-100 bg-neutral-50/80 px-2.5 py-2">
+        <div className="flex items-start justify-between gap-1.5">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-neutral-500">Group</p>
+              <span className="rounded-full border border-neutral-200 bg-white px-1.5 py-px text-[9px] font-bold tabular-nums text-neutral-600">
+                {memberCount}
+              </span>
+            </div>
+            <h4 className="mt-0.5 text-sm font-bold leading-snug tracking-tight text-neutral-950">
+              <NameEditor value={group.name} onSave={onRename} />
+            </h4>
+          </div>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="rounded-md p-1 text-neutral-400 transition hover:bg-red-50 hover:text-red-600"
+            aria-label={`Delete ${group.name}`}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
         </div>
-        <button type="button" onClick={onDelete} className="rounded-lg p-1.5 text-slate-400 hover:bg-red-50 hover:text-red-600" aria-label={`Delete ${group.name}`}>
-          <Trash2 className="h-4 w-4" />
-        </button>
       </div>
-      {place && <div className="mt-3">{place}</div>}
-      <div className="mt-2 overflow-x-auto">
-        <NateModeSwitch groupId={group.id} mode={group.newintervene} />
-      </div>
-      {onOpen ? (
-        <button
-          type="button"
-          disabled={opening}
-          onClick={() => onOpen(group.id, group.chatSessionId)}
-          className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 text-xs font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-        >
-          {opening && <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-current border-t-transparent" />}
-          {opening ? "Opening" : "Open"}
-          {!opening && <ArrowRight className="h-3.5 w-3.5" />}
-        </button>
-      ) : (
-        <PendingLink
-          href={`/dashboard?group=${group.id}&view=note${group.chatSessionId ? `&session=${group.chatSessionId}` : ""}`}
-          className="mt-3 inline-flex h-9 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 text-xs font-semibold text-white hover:bg-slate-800"
-        >
-          Open
-          <ArrowRight className="h-3.5 w-3.5" />
-        </PendingLink>
-      )}
-      <div className="mt-3">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Students</p>
-        {group.members.length === 0 && <p className="mt-1 text-xs text-slate-500">No students in this group yet.</p>}
-        <ul className="mt-2 space-y-1.5">
-          {group.members.map((student) => (
-            <li
-              key={student.id}
-              className="flex items-center justify-between gap-2 rounded-xl border border-slate-100 bg-slate-50/80 px-2 py-1.5"
-            >
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-white text-[10px] font-bold text-slate-600 shadow-sm">
-                  {rosterInitials(student.name)}
-                </span>
-                <p className="truncate text-sm font-medium text-slate-800">{student.name}</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => onRemove(student.id, student.name)}
-                className="h-8 shrink-0 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-600 transition hover:border-red-200 hover:bg-red-50 hover:text-red-700"
-              >
-                Remove
-              </button>
-            </li>
-          ))}
-        </ul>
+
+      <div className="flex flex-col gap-1.5 p-2">
+        {place && <div className="min-w-0">{place}</div>}
+
+        <div className="w-full rounded-lg border border-neutral-100 bg-neutral-50/50 px-2 py-1.5">
+          <NateModeSwitch groupId={group.id} mode={group.newintervene} compact />
+        </div>
+
+        {onOpen ? (
+          <button
+            type="button"
+            disabled={opening}
+            onClick={() => onOpen(group.id, group.chatSessionId)}
+            className="inline-flex h-7 w-full items-center justify-center gap-1.5 rounded-lg border border-neutral-950 bg-neutral-950 text-[11px] font-semibold text-white transition hover:bg-neutral-800 disabled:opacity-60"
+          >
+            {opening && (
+              <span className="h-3 w-3 animate-spin rounded-full border-2 border-current border-t-transparent" />
+            )}
+            {opening ? "Opening" : "Open"}
+            {!opening && <ArrowRight className="h-3 w-3" />}
+          </button>
+        ) : (
+          <PendingLink
+            href={`/dashboard?group=${group.id}&view=note${group.chatSessionId ? `&session=${group.chatSessionId}` : ""}`}
+            className="inline-flex h-7 w-full items-center justify-center gap-1.5 rounded-lg border border-neutral-950 bg-neutral-950 text-[11px] font-semibold text-white transition hover:bg-neutral-800"
+          >
+            Open
+            <ArrowRight className="h-3 w-3" />
+          </PendingLink>
+        )}
+
+        <div className="rounded-lg border border-neutral-100 bg-neutral-50/40 px-2 py-2">
+          <p className="text-[9px] font-bold uppercase tracking-[0.1em] text-neutral-500">Members</p>
+          {memberCount === 0 ? (
+            <p className="mt-1 text-[11px] leading-snug text-neutral-500">None yet</p>
+          ) : (
+            <ul className="mt-1.5 space-y-1">
+              {group.members.map((student) => (
+                <GroupMemberRow
+                  key={student.id}
+                  name={student.name}
+                  onRemove={() => onRemove(student.id, student.name)}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
       </div>
     </li>
   )

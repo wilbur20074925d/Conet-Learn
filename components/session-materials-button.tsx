@@ -1,7 +1,19 @@
 "use client"
 
 import { FormEvent, useCallback, useEffect, useState } from "react"
-import { BookOpen, ExternalLink, Link2, Paperclip, Pencil, Plus, Trash2 } from "lucide-react"
+import Image from "next/image"
+import {
+  BookOpen,
+  ExternalLink,
+  FileText,
+  Link2,
+  ListChecks,
+  Paperclip,
+  Pencil,
+  Plus,
+  Trash2,
+} from "lucide-react"
+import materialsIllustration from "@/components/figure/meterials.png"
 import {
   Dialog,
   DialogContent,
@@ -37,40 +49,194 @@ function InstructionCopy({ text }: { text: string }) {
     .map((block) => block.trim())
     .filter(Boolean)
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {blocks.map((block, index) => (
-        <p key={index} className="whitespace-pre-wrap text-sm leading-7 text-slate-700">
-          {block}
-        </p>
+        <div
+          key={index}
+          className="relative rounded-xl border border-neutral-100 bg-neutral-50/80 px-3 py-2.5 pl-4 before:absolute before:left-0 before:top-2 before:bottom-2 before:w-0.5 before:rounded-full before:bg-neutral-900"
+        >
+          <p className="whitespace-pre-wrap text-sm leading-6 text-neutral-800">{block}</p>
+        </div>
       ))}
     </div>
   )
 }
 
-function MaterialCard({ item, index }: { item: SessionMaterial; index: number }) {
-  const href = safeHref(item.url)
+function SectionHeading({
+  icon: Icon,
+  title,
+  badge,
+}: {
+  icon: typeof ListChecks
+  title: string
+  badge?: string
+}) {
   return (
-    <article className="rounded-2xl border border-slate-200 bg-white px-3.5 py-3 shadow-sm">
-      <div className="flex items-start gap-3">
-        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[11px] font-semibold text-white">
+    <div className="flex items-center justify-between gap-2">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-neutral-200 bg-neutral-50">
+          <Icon className="h-3.5 w-3.5 text-neutral-900" strokeWidth={2} aria-hidden />
+        </span>
+        <h3 className="text-xs font-bold uppercase tracking-[0.1em] text-neutral-600">{title}</h3>
+      </div>
+      {badge ? (
+        <span className="shrink-0 text-[10px] font-semibold tabular-nums text-neutral-400">{badge}</span>
+      ) : null}
+    </div>
+  )
+}
+
+function MaterialsBriefPanel({
+  entered,
+  hasInstructions,
+  hasMaterials,
+  materialCount,
+  instructions,
+  materials,
+}: {
+  entered: boolean
+  hasInstructions: boolean
+  hasMaterials: boolean
+  materialCount: number
+  instructions: string
+  materials: SessionMaterial[]
+}) {
+  return (
+    <div
+      className={cn(
+        "overflow-hidden rounded-2xl border border-neutral-200 bg-white shadow-sm",
+        entered && "animate-welcome-fade-up",
+      )}
+      style={entered ? { animationDelay: "180ms" } : undefined}
+    >
+      <div className="px-3.5 py-3 sm:px-4">
+        <SectionHeading icon={ListChecks} title="Instructions" />
+        <div className="mt-2">
+          {hasInstructions ? (
+            <InstructionCopy text={instructions} />
+          ) : (
+            <p className="rounded-lg border border-dashed border-neutral-200 px-3 py-3 text-center text-xs text-neutral-500">
+              No instructions for this session.
+            </p>
+          )}
+        </div>
+      </div>
+
+      <div className="border-t border-neutral-100 px-3.5 py-3 sm:px-4">
+        <SectionHeading
+          icon={BookOpen}
+          title="Related materials"
+          badge={materialCount > 0 ? String(materialCount) : undefined}
+        />
+        <div className="mt-2">
+          {hasMaterials ? (
+            <div className="space-y-2">
+              {materials.map((item, index) => (
+                <MaterialCard key={item.id} item={item} index={index} entered={entered} />
+              ))}
+            </div>
+          ) : (
+            <p className="rounded-lg border border-dashed border-neutral-200 px-3 py-3 text-center text-xs text-neutral-500">
+              No related materials yet.
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MaterialsGridBackdrop({ className }: { className?: string }) {
+  return (
+    <div
+      className={cn("pointer-events-none absolute inset-0 opacity-[0.4]", className)}
+      style={{
+        backgroundImage:
+          "linear-gradient(to right, rgba(0,0,0,0.04) 1px, transparent 1px), linear-gradient(to bottom, rgba(0,0,0,0.04) 1px, transparent 1px)",
+        backgroundSize: "20px 20px",
+      }}
+      aria-hidden
+    />
+  )
+}
+
+function MaterialsIllustration({ compact = false, animate = false }: { compact?: boolean; animate?: boolean }) {
+  return (
+    <div
+      className={cn(
+        "relative mx-auto",
+        compact ? "max-w-[72px]" : "max-w-[88px]",
+        animate && "animate-welcome-float",
+      )}
+    >
+      <Image
+        src={materialsIllustration}
+        alt=""
+        className="h-auto w-full grayscale contrast-[1.06] brightness-[1.02]"
+        priority={!compact}
+      />
+    </div>
+  )
+}
+
+function MaterialCard({
+  item,
+  index,
+  entered,
+}: {
+  item: SessionMaterial
+  index: number
+  entered: boolean
+}) {
+  const href = safeHref(item.url)
+  const [expanded, setExpanded] = useState(false)
+  const hasNote = Boolean(item.note?.trim())
+
+  return (
+    <article
+      className={cn(
+        "group flex items-start gap-2.5 rounded-xl border border-neutral-100 bg-neutral-50/50 p-2.5 transition-colors hover:border-neutral-300 hover:bg-white",
+        entered && "animate-welcome-fade-up",
+      )}
+      style={entered ? { animationDelay: `${220 + index * 50}ms` } : undefined}
+    >
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-neutral-950 text-[11px] font-bold tabular-nums text-white">
           {index + 1}
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold tracking-tight text-slate-900">{item.title}</p>
-          {item.note && <p className="mt-1 text-sm leading-6 text-slate-600">{item.note}</p>}
+          <div className="flex items-start gap-2">
+            <FileText className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neutral-500" strokeWidth={2} aria-hidden />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold leading-snug tracking-tight text-neutral-950">{item.title}</p>
+              {item.fileName && !href && (
+                <p className="mt-0.5 truncate text-[11px] text-neutral-500">{item.fileName}</p>
+              )}
+              {hasNote && (
+                <button
+                  type="button"
+                  onClick={() => setExpanded((value) => !value)}
+                  className="mt-1 text-[11px] font-semibold text-neutral-600 hover:text-neutral-900 hover:underline"
+                >
+                  {expanded ? "Hide note" : "Note"}
+                </button>
+              )}
+              {hasNote && expanded && (
+                <p className="mt-1.5 text-xs leading-5 text-neutral-600">{item.note}</p>
+              )}
+            </div>
+          </div>
           {href && (
             <a
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-slate-700 underline decoration-slate-300 underline-offset-4 hover:text-slate-950"
+              className="mt-2 inline-flex w-full items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-neutral-800 transition hover:border-neutral-950 hover:bg-neutral-950 hover:text-white"
             >
-              {item.fileName ? item.fileName : "Open material"}
-              <ExternalLink className="h-3 w-3" />
+              <span className="truncate">{item.fileName ? item.fileName : "Open"}</span>
+              <ExternalLink className="h-3 w-3 shrink-0 opacity-70" />
             </a>
           )}
         </div>
-      </div>
     </article>
   )
 }
@@ -94,6 +260,16 @@ export default function SessionMaterialsButton({
   const [uploadingId, setUploadingId] = useState<string | null>(null)
   const [error, setError] = useState("")
   const [needsSetup, setNeedsSetup] = useState(false)
+  const [entered, setEntered] = useState(false)
+
+  useEffect(() => {
+    if (!open) {
+      setEntered(false)
+      return
+    }
+    const frame = requestAnimationFrame(() => setEntered(true))
+    return () => cancelAnimationFrame(frame)
+  }, [open])
 
   const refreshBrief = useCallback(async () => {
     const result = await getSessionBrief(sessionId)
@@ -215,6 +391,9 @@ export default function SessionMaterialsButton({
   const hasContent = Boolean(brief.title || brief.instructions || brief.materials.length)
   const updatedLabel = formatUpdated(brief.updatedAt)
   const heading = brief.title || "This session"
+  const hasInstructions = Boolean(brief.instructions.trim())
+  const hasMaterials = brief.materials.length > 0
+  const materialCount = brief.materials.length
 
   return (
     <>
@@ -229,13 +408,15 @@ export default function SessionMaterialsButton({
           "group inline-flex items-center gap-2 border font-semibold shadow-sm transition duration-200 active:scale-[0.98]",
           compact ? "h-8 rounded-lg px-2.5 text-xs" : "h-9 rounded-full px-3.5 text-sm hover:-translate-y-px hover:shadow-md",
           open
-            ? "border-slate-900 bg-slate-900 text-white"
-            : "border-slate-200 bg-white text-slate-800 hover:border-slate-300 hover:bg-slate-50"
+            ? "border-neutral-950 bg-neutral-950 text-white"
+            : "border-neutral-200 bg-white text-neutral-800 hover:border-neutral-300 hover:bg-neutral-50"
         )}
       >
         <BookOpen className={cn(compact ? "h-3.5 w-3.5" : "h-4 w-4 transition duration-200 group-hover:-rotate-6")} />
         {compact ? "Materials" : "Session Materials"}
-        {loaded && hasContent && !open && <span className="h-1.5 w-1.5 rounded-full bg-slate-900" />}
+        {loaded && hasContent && !open && (
+          <span className="h-1.5 w-1.5 rounded-full bg-neutral-950 animate-pulse" />
+        )}
       </button>
 
       <Dialog
@@ -245,24 +426,35 @@ export default function SessionMaterialsButton({
           if (!next) setEditing(false)
         }}
       >
-        <DialogContent className="max-h-[min(40rem,calc(100dvh-2.5rem))] gap-0 overflow-hidden rounded-3xl border-slate-200 bg-[#f7f8fa] p-0 shadow-2xl sm:max-w-[32rem]">
-          <div className="border-b border-slate-200 bg-white px-5 pb-4 pt-5 pr-12">
-            <DialogHeader className="space-y-1 text-left">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Current session</p>
-              <DialogTitle className="text-xl font-bold tracking-tight text-slate-950">
-                {editing ? "Edit session materials" : heading}
-              </DialogTitle>
-              <DialogDescription className="text-sm text-slate-500">
-                {editing
-                  ? "Students see this as soon as you save."
-                  : updatedLabel
-                    ? `Updated ${updatedLabel}`
-                    : "Instructions and files for this session."}
-              </DialogDescription>
-            </DialogHeader>
-          </div>
+        <DialogContent
+          className={cn(
+            "flex max-h-[calc(100dvh-1.25rem)] w-[calc(100%-1.5rem)] max-w-xl flex-col gap-0 overflow-y-auto rounded-2xl border-neutral-200 bg-white p-0 shadow-[0_28px_70px_-32px_rgba(0,0,0,0.45)]",
+            "[&>button]:z-20 [&>button]:rounded-full [&>button]:border [&>button]:border-neutral-200 [&>button]:bg-white [&>button]:text-neutral-900 [&>button]:shadow-sm [&>button]:transition-transform [&>button]:hover:scale-105",
+          )}
+        >
+          <div className="flex flex-col">
+            <div className="relative shrink-0 border-b border-neutral-200 bg-neutral-50/80 px-4 py-3 pr-11">
+              <div className="relative z-10 flex items-start gap-3">
+                <MaterialsIllustration compact animate={entered} />
+                <DialogHeader className="min-w-0 flex-1 space-y-0.5 text-left">
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-neutral-400">
+                    Session materials
+                  </p>
+                  <DialogTitle className="text-balance text-lg font-bold leading-tight tracking-tight text-neutral-950">
+                    {editing ? "Edit session materials" : heading}
+                  </DialogTitle>
+                  <DialogDescription className="text-xs leading-snug text-neutral-500">
+                    {editing
+                      ? "Students see this as soon as you save."
+                      : updatedLabel
+                        ? `Updated ${updatedLabel}`
+                        : "Instructions and files below."}
+                  </DialogDescription>
+                </DialogHeader>
+              </div>
+            </div>
 
-          <div className="max-h-[min(30rem,calc(100dvh-11rem))] overflow-y-auto px-5 py-4">
+            <div className="px-4 py-3 sm:px-4 sm:py-3">
             {needsSetup ? (
               <p className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
                 {canEdit
@@ -377,55 +569,47 @@ export default function SessionMaterialsButton({
                 {error && <p className="text-sm text-red-600">{error}</p>}
               </form>
             ) : !loaded ? (
-              <div className="space-y-3">
-                <div className="h-24 animate-pulse rounded-2xl bg-white" />
-                <div className="h-16 animate-pulse rounded-2xl bg-white" />
+              <div className="space-y-2">
+                <div className="h-16 animate-pulse rounded-xl border border-neutral-200 bg-neutral-50" />
+                <div className="h-12 animate-pulse rounded-xl border border-neutral-200 bg-neutral-50" />
               </div>
             ) : error && !hasContent ? (
               <p className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">{error}</p>
             ) : !hasContent ? (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-white px-4 py-8 text-center">
-                <BookOpen className="mx-auto h-5 w-5 text-slate-400" />
-                <p className="mt-3 text-sm font-semibold text-slate-800">Nothing posted yet</p>
-                <p className="mt-1 text-sm leading-6 text-slate-500">
-                  {canEdit
-                    ? "Add the instructions and materials students should use in this session."
-                    : "Your teacher has not posted instructions for this session yet."}
-                </p>
+              <div
+                className={cn(
+                  "relative overflow-hidden rounded-xl border border-dashed border-neutral-300 bg-neutral-50 px-3 py-5 text-center",
+                  entered && "animate-welcome-fade-up",
+                )}
+              >
+                <MaterialsGridBackdrop className="opacity-25" />
+                <div className="relative z-10">
+                  <MaterialsIllustration compact animate={entered} />
+                  <p className="mt-4 text-sm font-semibold text-neutral-900">Nothing posted yet</p>
+                  <p className="mx-auto mt-1 max-w-xs text-sm leading-6 text-neutral-500">
+                    {canEdit
+                      ? "Add the instructions and materials students should use in this session."
+                      : "Your teacher has not posted instructions for this session yet."}
+                  </p>
+                </div>
               </div>
             ) : (
-              <div className="space-y-5">
-                <section>
-                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Instructions</h3>
-                  {brief.instructions ? (
-                    <div className="mt-2 rounded-2xl border border-slate-200 bg-white px-4 py-3.5 shadow-sm">
-                      <InstructionCopy text={brief.instructions} />
-                    </div>
-                  ) : (
-                    <p className="mt-2 text-sm text-slate-500">No instructions for this session.</p>
-                  )}
-                </section>
-                <section>
-                  <h3 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">
-                    Related materials
-                  </h3>
-                  {brief.materials.length > 0 ? (
-                    <div className="mt-2 space-y-2">
-                      {brief.materials.map((item, index) => (
-                        <MaterialCard key={item.id} item={item} index={index} />
-                      ))}
-                    </div>
-                  ) : (
-                    <p className="mt-2 text-sm text-slate-500">No related materials yet.</p>
-                  )}
-                </section>
-                {error && <p className="text-sm text-red-600">{error}</p>}
-              </div>
+              <>
+                <MaterialsBriefPanel
+                  entered={entered}
+                  hasInstructions={hasInstructions}
+                  hasMaterials={hasMaterials}
+                  materialCount={materialCount}
+                  instructions={brief.instructions}
+                  materials={brief.materials}
+                />
+                {error && <p className="mt-2 text-center text-xs text-red-600">{error}</p>}
+              </>
             )}
-          </div>
+            </div>
 
-          {canEdit && !needsSetup && (
-            <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-white px-5 py-3">
+            {canEdit && !needsSetup && (
+              <div className="flex shrink-0 items-center justify-end gap-2 border-t border-neutral-200 bg-white px-4 py-2.5">
               {editing ? (
                 <>
                   <button
@@ -434,7 +618,7 @@ export default function SessionMaterialsButton({
                       setEditing(false)
                       setError("")
                     }}
-                    className="h-9 rounded-xl px-3 text-sm font-semibold text-slate-600 hover:bg-slate-100"
+                    className="h-9 rounded-xl px-3 text-sm font-semibold text-neutral-600 transition hover:bg-neutral-100"
                   >
                     Cancel
                   </button>
@@ -442,23 +626,33 @@ export default function SessionMaterialsButton({
                     type="submit"
                     form="session-materials-form"
                     disabled={pending}
-                    className="h-9 rounded-xl bg-slate-900 px-3.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
+                    className="group relative h-9 overflow-hidden rounded-xl border border-neutral-950 bg-neutral-950 px-3.5 text-sm font-semibold text-white transition hover:bg-neutral-800 disabled:opacity-50"
                   >
-                    {pending ? "Saving..." : "Save"}
+                    <span
+                      className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:animate-welcome-shimmer group-hover:opacity-100"
+                      style={{
+                        background:
+                          "linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.12) 50%, transparent 60%)",
+                        backgroundSize: "200% 100%",
+                      }}
+                      aria-hidden
+                    />
+                    <span className="relative">{pending ? "Saving..." : "Save"}</span>
                   </button>
                 </>
               ) : (
                 <button
                   type="button"
                   onClick={startEdit}
-                  className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-slate-900 px-3.5 text-sm font-semibold text-white hover:bg-slate-800"
+                  className="group inline-flex h-9 items-center gap-1.5 rounded-xl border border-neutral-950 bg-neutral-950 px-3.5 text-sm font-semibold text-white transition hover:bg-neutral-800"
                 >
-                  <Pencil className="h-3.5 w-3.5" />
+                  <Pencil className="h-3.5 w-3.5 transition group-hover:-rotate-6" />
                   Edit
                 </button>
               )}
-            </div>
-          )}
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </>

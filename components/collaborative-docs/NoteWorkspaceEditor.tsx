@@ -30,10 +30,12 @@ import {
 } from "@/components/ui/dialog"
 import { useYjsNoteCollaboration } from "@/hooks/useYjsNoteCollaboration"
 import type { CollaborativeNote } from "@/lib/collaborative-notes"
+import { extractAuthoredSectionsFromHtml } from "@/lib/collaborative-author-mark"
 import { listGroupPostSubmissions, submitGroupPost, type GroupPostSubmission } from "@/lib/group-post-submissions"
 import { getYjsWsUrl } from "@/lib/yjs/normalizeYjsWsOrigin"
 import {
   collapseRepeatedTitle,
+  commentsToArray,
   getMetaMap,
   parseStoredNote,
   serializeNoteDocForStorage,
@@ -249,11 +251,25 @@ export function NoteWorkspaceEditor({
     }
     setSubmitting(true)
     setSubmitError("")
+    const contributorMap = new Map<string, { userId: string; userName: string }>()
+    contributorMap.set(currentUser.id, { userId: currentUser.id, userName: currentUser.name })
+    for (const collaborator of collaborators) {
+      contributorMap.set(collaborator.userId, {
+        userId: collaborator.userId,
+        userName: collaborator.userName || "User",
+      })
+    }
     const result = await submitGroupPost({
       groupId: note.group_id,
       noteId: note.id,
       title: displayTitle || note.title || "Group document",
       html,
+      meta: {
+        submittedBy: { userId: currentUser.id, userName: currentUser.name },
+        contributors: [...contributorMap.values()],
+        comments: ydoc ? commentsToArray(ydoc) : [],
+        authoredSections: extractAuthoredSectionsFromHtml(html),
+      },
     })
     setSubmitting(false)
     if (!result.ok) {

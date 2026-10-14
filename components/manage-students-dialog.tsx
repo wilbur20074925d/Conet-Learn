@@ -56,6 +56,7 @@ export default function ManageStudentsDialog({
   courseOptions = [],
   context = "class",
   isRowSelectable,
+  compactTrigger = false,
 }: {
   title: string
   description: string
@@ -70,6 +71,7 @@ export default function ManageStudentsDialog({
   context?: "class" | "session" | "group"
   /** When false, row is visible (e.g. for course filters) but cannot be selected */
   isRowSelectable?: (student: ManageStudent) => boolean
+  compactTrigger?: boolean
 }) {
   const canSelect = isRowSelectable ?? (() => true)
   const [open, setOpen] = useState(false)
@@ -183,9 +185,12 @@ export default function ManageStudentsDialog({
       <button
         type="button"
         onClick={openDialog}
-        className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-800 shadow-sm transition hover:border-slate-300 hover:bg-slate-50"
+        className={cn(
+          "inline-flex w-full shrink-0 items-center justify-center gap-1.5 rounded-lg border border-neutral-200 bg-white font-semibold text-neutral-800 shadow-sm transition hover:border-neutral-300 hover:bg-neutral-50",
+          compactTrigger ? "h-7 px-2 text-[11px]" : "h-9 rounded-xl px-3 text-xs",
+        )}
       >
-        <Users className="h-3.5 w-3.5 text-slate-500" />
+        <Users className={cn("text-neutral-500", compactTrigger ? "h-3 w-3" : "h-3.5 w-3.5")} />
         {triggerLabel}
       </button>
 
