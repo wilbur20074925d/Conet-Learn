@@ -603,6 +603,184 @@ export default function TeacherClassBoard({
     })()
   }
 
+  function teacherSessionBody(session: CatalogSession, index: number, classroom: CatalogClass) {
+    return (
+      <div className="p-3 sm:p-4">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">
+            {index + 1}
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Session</p>
+            <h3 className="text-lg font-bold tracking-tight text-slate-900">
+              <NameEditor
+                value={session.title}
+                onSave={(next) => {
+                  if (stillSaving(session.id)) return
+                  perform({ type: "rename-session", id: session.id, title: next }, () =>
+                    renameClassSession(session.id, next)
+                  )
+                }}
+              />
+            </h3>
+          </div>
+          <SessionMaterialsButton role="teacher" sessionId={session.id} compact />
+          <ManageStudentsDialog
+            title={`Manage students in ${session.title}`}
+            description={`Add students from ${classroom.name}, or move them out of this session. A student can be in more than one session of their class.`}
+            available={notYetPlaced(classroom.students, session.students)}
+            enrolled={session.students}
+            onAdd={(chosen) => {
+              if (stillSaving(session.id) || chosen.length === 0) return
+              perform(
+                { type: "add-session-students", sessionId: session.id, students: chosen },
+                () => placeStudentsInSession(session.id, chosen.map((student) => student.id))
+              )
+            }}
+            onMoveOut={(chosen) => {
+              if (stillSaving(session.id) || chosen.length === 0) return
+              const ids = chosen.map((student) => student.id)
+              perform({ type: "remove-session-students", sessionId: session.id, userIds: ids }, async () => {
+                for (const id of ids) {
+                  const result = await removeStudentFromSession(session.id, id)
+                  if (!result.ok) return result
+                }
+                return { ok: true as const }
+              })
+            }}
+          />
+          <CreateDialog
+            label="Create group"
+            title="Create group"
+            description={`This group will be added inside ${session.title}.`}
+            placeholder="Group name"
+            onCreate={(name) => {
+              if (stillSaving(session.id)) return
+              perform(
+                { type: "add-group", sessionId: session.id, group: blankGroup(name, session.id) },
+                () => createSessionGroup(session.id, name)
+              )
+            }}
+          />
+          <CreateDialog
+            label="Duplicate"
+            title="Duplicate session"
+            description={`Copies the groups and materials in ${session.title} into ${classroom.name}. Students and chat stay in the original. Place students in the copy yourself.`}
+            placeholder="Session name"
+            initialValue={`Copy of ${session.title}`.slice(0, 80)}
+            submitLabel="Duplicate"
+            tone="quiet"
+            icon="copy"
+            onCreate={(title) => {
+              if (stillSaving(session.id)) return
+              perform(
+                {
+                  type: "add-session",
+                  classId: classroom.id,
+                  session: copySession(session, classroom.id, title),
+                },
+                () => duplicateClassSession(session.id, title)
+              )
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => {
+              if (stillSaving(session.id)) return
+              askConfirm(`Delete ${session.title}`, `Delete “${session.title}” and the groups inside it?`, () =>
+                perform({ type: "delete-session", id: session.id }, () => deleteClassSession(session.id))
+              )
+            }}
+            className="rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-600"
+            aria-label={`Delete ${session.title}`}
+          >
+            <Trash2 className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="mt-3">
+          <StudentRoster students={session.students} empty="No students in this session yet." />
+        </div>
+
+        {session.groups.length === 0 ? (
+          <p className="mt-3 text-sm text-slate-500">No groups in this session yet.</p>
+        ) : (
+          <ul className="mt-3 grid gap-3 lg:grid-cols-2">
+            {session.groups.map((group) => (
+              <GroupCard
+                key={group.id}
+                group={group}
+                onRename={(next) => {
+                  if (stillSaving(group.id)) return
+                  perform({ type: "rename-group", id: group.id, name: next }, () => renameGroup(group.id, next))
+                }}
+                onDelete={() => {
+                  if (stillSaving(group.id)) return
+                  askConfirm(
+                    `Delete ${group.name}`,
+                    `Delete “${group.name}”? Students in it will need to be placed in a group again.`,
+                    () => perform({ type: "delete-group", id: group.id }, () => deleteGroup(group.id))
+                  )
+                }}
+                onOpen={onOpen}
+                opening={openingId === group.id}
+                onRemove={(userId, studentName) => {
+                  if (stillSaving(group.id)) return
+                  askConfirm(
+                    `Remove ${studentName}`,
+                    `Remove ${studentName} from ${group.name}? They stay in this session and can be placed in another group.`,
+                    () =>
+                      perform({ type: "remove-member", groupId: group.id, userId }, () =>
+                        removeStudent(userId, group.id)
+                      ),
+                    "Remove"
+                  )
+                }}
+                place={
+                  <ManageStudentsDialog
+                    title={`Manage students in ${group.name}`}
+                    description="Add students from this session, or move them out of this group. Each student can be in one group for this session."
+                    available={session.students
+                      .filter((student) => !group.members.some((member) => member.id === student.id))
+                      .map((student) => {
+                        const current = session.groups.find(
+                          (item) => item.id !== group.id && item.members.some((member) => member.id === student.id)
+                        )
+                        return current ? { ...student, name: `${student.name} (in ${current.name})` } : student
+                      })}
+                    enrolled={group.members.map((member) => ({ id: member.id, name: member.name }))}
+                    onAdd={(chosen) => {
+                      if (stillSaving(group.id) || chosen.length === 0) return
+                      const clean = chosen.map((student) => {
+                        const source = session.students.find((item) => item.id === student.id)
+                        return { id: student.id, name: source?.name || student.name }
+                      })
+                      perform(
+                        { type: "add-group-students", sessionId: session.id, groupId: group.id, students: clean },
+                        () => placeStudentsInGroup(group.id, clean.map((student) => student.id))
+                      )
+                    }}
+                    onMoveOut={(chosen) => {
+                      if (stillSaving(group.id) || chosen.length === 0) return
+                      const ids = chosen.map((student) => student.id)
+                      perform({ type: "remove-group-students", groupId: group.id, userIds: ids }, async () => {
+                        for (const id of ids) {
+                          const result = await removeStudent(id, group.id)
+                          if (!result.ok) return result
+                        }
+                        return { ok: true as const }
+                      })
+                    }}
+                  />
+                }
+              />
+            ))}
+          </ul>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 py-6 sm:px-6 sm:py-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -759,188 +937,10 @@ export default function TeacherClassBoard({
                 {classroom.sessions.map((session, index) => (
                   <li
                     key={session.id}
-                    className="group/session grid overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/70 transition duration-300 hover:border-slate-300 hover:shadow-md grid-cols-[10.5rem_minmax(0,1fr)] sm:grid-cols-[14rem_minmax(0,1fr)] md:grid-cols-[16rem_minmax(0,1fr)] lg:grid-cols-[18rem_minmax(0,1fr)]"
+                    className="group/session overflow-hidden rounded-2xl border border-slate-200 bg-slate-50/70 transition duration-300 hover:border-slate-300 hover:shadow-md"
                   >
-                    <SessionArtwork index={art.get(session.id) ?? index} variant="side" />
-                    <div className="min-w-0 flex-1 p-2.5 sm:p-3">
-                    <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-xs font-semibold text-white">
-                        {index + 1}
-                      </span>
-                      <div className="min-w-0 flex-1">
-                        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-slate-400">Session</p>
-                        <h3 className="text-lg font-bold tracking-tight text-slate-900">
-                          <NameEditor
-                            value={session.title}
-                            onSave={(next) => {
-                              if (stillSaving(session.id)) return
-                              perform(
-                                { type: "rename-session", id: session.id, title: next },
-                                () => renameClassSession(session.id, next)
-                              )
-                            }}
-                          />
-                        </h3>
-                      </div>
-                      <SessionMaterialsButton role="teacher" sessionId={session.id} compact />
-                      <ManageStudentsDialog
-                        title={`Manage students in ${session.title}`}
-                        description={`Add students from ${classroom.name}, or move them out of this session. A student can be in more than one session of their class.`}
-                        available={notYetPlaced(classroom.students, session.students)}
-                        enrolled={session.students}
-                        onAdd={(chosen) => {
-                          if (stillSaving(session.id) || chosen.length === 0) return
-                          perform(
-                            { type: "add-session-students", sessionId: session.id, students: chosen },
-                            () => placeStudentsInSession(session.id, chosen.map((student) => student.id))
-                          )
-                        }}
-                        onMoveOut={(chosen) => {
-                          if (stillSaving(session.id) || chosen.length === 0) return
-                          const ids = chosen.map((student) => student.id)
-                          perform(
-                            { type: "remove-session-students", sessionId: session.id, userIds: ids },
-                            async () => {
-                              for (const id of ids) {
-                                const result = await removeStudentFromSession(session.id, id)
-                                if (!result.ok) return result
-                              }
-                              return { ok: true as const }
-                            }
-                          )
-                        }}
-                      />
-                      <CreateDialog
-                        label="Create group"
-                        title="Create group"
-                        description={`This group will be added inside ${session.title}.`}
-                        placeholder="Group name"
-                        onCreate={(name) => {
-                          if (stillSaving(session.id)) return
-                          perform(
-                            { type: "add-group", sessionId: session.id, group: blankGroup(name, session.id) },
-                            () => createSessionGroup(session.id, name)
-                          )
-                        }}
-                      />
-                      <CreateDialog
-                        label="Duplicate"
-                        title="Duplicate session"
-                        description={`Copies the groups and materials in ${session.title} into ${classroom.name}. Students and chat stay in the original. Place students in the copy yourself.`}
-                        placeholder="Session name"
-                        initialValue={`Copy of ${session.title}`.slice(0, 80)}
-                        submitLabel="Duplicate"
-                        tone="quiet"
-                        icon="copy"
-                        onCreate={(title) => {
-                          if (stillSaving(session.id)) return
-                          perform(
-                            {
-                              type: "add-session",
-                              classId: classroom.id,
-                              session: copySession(session, classroom.id, title),
-                            },
-                            () => duplicateClassSession(session.id, title)
-                          )
-                        }}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (stillSaving(session.id)) return
-                          askConfirm(`Delete ${session.title}`, `Delete “${session.title}” and the groups inside it?`, () =>
-                            perform({ type: "delete-session", id: session.id }, () => deleteClassSession(session.id))
-                          )
-                        }}
-                        className="rounded-lg p-2 text-slate-400 hover:bg-red-50 hover:text-red-600"
-                        aria-label={`Delete ${session.title}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-
-                    <div className="mt-3">
-                      <StudentRoster students={session.students} empty="No students in this session yet." />
-                    </div>
-
-                    {session.groups.length === 0 ? (
-                      <p className="mt-3 text-sm text-slate-500">No groups in this session yet.</p>
-                    ) : (
-                      <ul className="mt-3 grid gap-3 lg:grid-cols-2">
-                        {session.groups.map((group) => (
-                          <GroupCard
-                            key={group.id}
-                            group={group}
-                            onRename={(next) => {
-                              if (stillSaving(group.id)) return
-                              perform({ type: "rename-group", id: group.id, name: next }, () => renameGroup(group.id, next))
-                            }}
-                            onDelete={() => {
-                              if (stillSaving(group.id)) return
-                              askConfirm(`Delete ${group.name}`, `Delete “${group.name}”? Students in it will need to be placed in a group again.`, () =>
-                                perform({ type: "delete-group", id: group.id }, () => deleteGroup(group.id))
-                              )
-                            }}
-                            onOpen={onOpen}
-                            opening={openingId === group.id}
-                            onRemove={(userId, studentName) => {
-                              if (stillSaving(group.id)) return
-                              askConfirm(
-                                `Remove ${studentName}`,
-                                `Remove ${studentName} from ${group.name}? They stay in this session and can be placed in another group.`,
-                                () =>
-                                  perform(
-                                    { type: "remove-member", groupId: group.id, userId },
-                                    () => removeStudent(userId, group.id)
-                                  ),
-                                "Remove"
-                              )
-                            }}
-                            place={
-                              <ManageStudentsDialog
-                                title={`Manage students in ${group.name}`}
-                                description="Add students from this session, or move them out of this group. Each student can be in one group for this session."
-                                available={session.students
-                                  .filter((student) => !group.members.some((member) => member.id === student.id))
-                                  .map((student) => {
-                                    const current = session.groups.find(
-                                      (item) => item.id !== group.id && item.members.some((member) => member.id === student.id)
-                                    )
-                                    return current ? { ...student, name: `${student.name} (in ${current.name})` } : student
-                                  })}
-                                enrolled={group.members.map((member) => ({ id: member.id, name: member.name }))}
-                                onAdd={(chosen) => {
-                                  if (stillSaving(group.id) || chosen.length === 0) return
-                                  const clean = chosen.map((student) => {
-                                    const source = session.students.find((item) => item.id === student.id)
-                                    return { id: student.id, name: source?.name || student.name }
-                                  })
-                                  perform(
-                                    { type: "add-group-students", sessionId: session.id, groupId: group.id, students: clean },
-                                    () => placeStudentsInGroup(group.id, clean.map((student) => student.id))
-                                  )
-                                }}
-                                onMoveOut={(chosen) => {
-                                  if (stillSaving(group.id) || chosen.length === 0) return
-                                  const ids = chosen.map((student) => student.id)
-                                  perform(
-                                    { type: "remove-group-students", groupId: group.id, userIds: ids },
-                                    async () => {
-                                      for (const id of ids) {
-                                        const result = await removeStudent(id, group.id)
-                                        if (!result.ok) return result
-                                      }
-                                      return { ok: true as const }
-                                    }
-                                  )
-                                }}
-                              />
-                            }
-                          />
-                        ))}
-                      </ul>
-                    )}
-                    </div>
+                    <SessionArtwork index={art.get(session.id) ?? index} className="h-32 sm:h-40" />
+                    {teacherSessionBody(session, index, classroom)}
                   </li>
                 ))}
               </ol>

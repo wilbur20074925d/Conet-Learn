@@ -24,7 +24,13 @@ import {
 } from "@/lib/parse-student-spreadsheet"
 
 const fieldClass =
-  "h-9 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-sky-400 focus:ring-2 focus:ring-sky-500/15"
+  "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
+
+const primaryBtn =
+  "inline-flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-slate-900 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-45"
+
+const secondaryBtn =
+  "inline-flex h-10 w-full items-center justify-center rounded-xl border border-slate-200 bg-white text-sm font-semibold text-slate-800 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-45"
 
 const DEFAULT_COLUMNS: StudentImportColumns = {
   nameCol: 0,
@@ -244,6 +250,14 @@ export default function StudentImportDialog({
   const requiredCols = [columns.nameCol, columns.usernameCol, columns.emailCol, columns.passwordCol]
   const columnsConflict = new Set(requiredCols).size !== requiredCols.length
 
+  const showBulkImport = (tab === "upload" || tab === "paste") && matrix !== null
+  const canCreateBulk =
+    showBulkImport &&
+    drafts.length > 0 &&
+    selectedDrafts.length > 0 &&
+    !columnsConflict &&
+    phase !== "importing"
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogTrigger asChild>
@@ -257,35 +271,35 @@ export default function StudentImportDialog({
         </button>
       </DialogTrigger>
 
-      <DialogContent className="max-h-[min(92vh,760px)] max-w-xl gap-0 overflow-hidden border-slate-200 p-0 sm:rounded-2xl">
-        <DialogHeader className="space-y-1 border-b border-slate-100 bg-gradient-to-b from-slate-50 to-white px-5 py-4 text-left">
-          <DialogTitle className="text-base font-bold text-slate-900">Add student accounts</DialogTitle>
-          <DialogDescription className="text-xs leading-relaxed text-slate-500">
+      <DialogContent className="flex max-h-[min(92vh,880px)] w-[min(100vw-2rem,56rem)] max-w-none flex-col gap-0 overflow-hidden border-slate-200 p-0 sm:rounded-2xl">
+        <DialogHeader className="shrink-0 space-y-2 border-b border-slate-200 bg-white px-6 py-5 text-left">
+          <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">Add student accounts</DialogTitle>
+          <DialogDescription className="max-w-2xl text-sm leading-relaxed text-slate-500">
             Each student needs a display name, username, email, and password (min. 8 characters). They sign in with
             email and password. Student ID is optional and used for class rosters only.
           </DialogDescription>
         </DialogHeader>
 
         {phase === "importing" && (
-          <div className="border-b border-sky-100 bg-sky-50/80 px-5 py-4">
-            <div className="flex items-center gap-2 text-sm font-medium text-sky-950">
-              <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+          <div className="shrink-0 border-b border-slate-200 bg-slate-50 px-6 py-4">
+            <div className="flex items-center gap-2 text-sm font-medium text-slate-900">
+              <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
               Creating {progress.done} of {progress.total}
               {progress.currentLabel ? ` — ${progress.currentLabel}` : ""}
             </div>
-            <Progress value={progressPercent} className="mt-3 h-2 bg-sky-100 [&>div]:bg-sky-600" />
+            <Progress value={progressPercent} className="mt-3 h-2 bg-slate-200 [&>div]:bg-slate-900" />
           </div>
         )}
 
         {phase === "done" && (
-          <div className="border-b border-slate-100 bg-white px-5 py-3">
+          <div className="shrink-0 border-b border-slate-200 bg-white px-6 py-4">
             <p className="flex items-center gap-2 text-sm font-medium text-slate-900">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+              <CheckCircle2 className="h-4 w-4 text-slate-900" />
               {createdCount} created
               {failedCount > 0 && <span className="font-normal text-red-600">· {failedCount} failed</span>}
             </p>
             {failedCount > 0 && (
-              <ul className="mt-2 max-h-24 space-y-1 overflow-y-auto text-xs text-red-700">
+              <ul className="mt-2 max-h-28 space-y-1 overflow-y-auto text-xs text-red-700">
                 {results
                   .filter((r) => !r.ok)
                   .map((r) => (
@@ -302,14 +316,14 @@ export default function StudentImportDialog({
                 setResults([])
                 setProgress({ done: 0, total: 0, currentLabel: "" })
               }}
-              className="mt-2 text-xs font-semibold text-sky-700 hover:text-sky-900"
+              className="mt-3 text-xs font-semibold text-slate-700 underline-offset-2 hover:text-slate-900 hover:underline"
             >
               Add more
             </button>
           </div>
         )}
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
           {(parseError || importError) && (
             <p className="mb-3 flex items-start gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-xs text-red-700">
               <XCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -317,23 +331,23 @@ export default function StudentImportDialog({
             </p>
           )}
 
-          <Tabs value={tab} onValueChange={setTab} className="gap-3">
-            <TabsList className="grid h-9 w-full grid-cols-3 rounded-lg bg-slate-100 p-0.5">
-              <TabsTrigger value="upload" className="gap-1 rounded-md text-xs" disabled={phase === "importing"}>
-                <Upload className="h-3.5 w-3.5" />
+          <Tabs value={tab} onValueChange={setTab} className="gap-4">
+            <TabsList className="grid h-11 w-full grid-cols-3 rounded-xl bg-slate-100 p-1">
+              <TabsTrigger value="upload" className="gap-1.5 rounded-lg text-sm data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm" disabled={phase === "importing"}>
+                <Upload className="h-4 w-4" />
                 File
               </TabsTrigger>
-              <TabsTrigger value="paste" className="gap-1 rounded-md text-xs" disabled={phase === "importing"}>
-                <ClipboardPaste className="h-3.5 w-3.5" />
+              <TabsTrigger value="paste" className="gap-1.5 rounded-lg text-sm data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm" disabled={phase === "importing"}>
+                <ClipboardPaste className="h-4 w-4" />
                 Paste
               </TabsTrigger>
-              <TabsTrigger value="type" className="gap-1 rounded-md text-xs" disabled={phase === "importing"}>
-                <PenLine className="h-3.5 w-3.5" />
+              <TabsTrigger value="type" className="gap-1.5 rounded-lg text-sm data-[state=active]:bg-white data-[state=active]:text-slate-900 data-[state=active]:shadow-sm" disabled={phase === "importing"}>
+                <PenLine className="h-4 w-4" />
                 Type
               </TabsTrigger>
             </TabsList>
 
-            <TabsContent value="upload" className="mt-3 space-y-3">
+            <TabsContent value="upload" className="mt-4 space-y-4">
               <input
                 ref={fileInputRef}
                 type="file"
@@ -345,11 +359,13 @@ export default function StudentImportDialog({
                 type="button"
                 disabled={phase === "importing"}
                 onClick={() => fileInputRef.current?.click()}
-                className="flex w-full flex-col items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/80 px-4 py-6 text-center transition hover:border-sky-300 hover:bg-sky-50/50 disabled:opacity-50"
+                className="flex w-full flex-col items-center gap-2 rounded-2xl border border-dashed border-slate-300 bg-slate-50 px-6 py-10 text-center transition hover:border-slate-400 hover:bg-slate-100/80 disabled:opacity-50"
               >
-                <FileSpreadsheet className="h-8 w-8 text-slate-400" />
-                <span className="text-sm font-semibold text-slate-800">Choose CSV or spreadsheet</span>
-                <span className="text-xs text-slate-500">Columns: name, username, email, password (+ optional student ID)</span>
+                <FileSpreadsheet className="h-10 w-10 text-slate-400" />
+                <span className="text-base font-semibold text-slate-900">Choose CSV or spreadsheet</span>
+                <span className="max-w-md text-sm text-slate-500">
+                  Columns: name, username, email, password (+ optional student ID)
+                </span>
               </button>
               {matrix && tab === "upload" && (
                 <ColumnAndRowPreview
@@ -369,25 +385,32 @@ export default function StudentImportDialog({
               )}
             </TabsContent>
 
-            <TabsContent value="paste" className="mt-3 space-y-3">
-              <textarea
-                value={pasteText}
-                onChange={(e) => setPasteText(e.target.value)}
-                placeholder={
-                  "Paste rows from Excel or Sheets…\nName\tUsername\tEmail\tPassword\tStudent ID\nChan Tai Men\tchantm\tchan@school.edu\tSecretPass1\t2A01"
-                }
-                disabled={phase === "importing"}
-                rows={4}
-                className="w-full resize-y rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-500/15 disabled:opacity-50"
-              />
-              <button
-                type="button"
-                disabled={phase === "importing" || !pasteText.trim()}
-                onClick={onApplyPaste}
-                className="h-9 w-full rounded-lg border border-slate-200 bg-white text-sm font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
-              >
-                Preview pasted rows
-              </button>
+            <TabsContent value="paste" className="mt-4 space-y-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Paste from Excel or Sheets</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Copy a table with headers, paste below, then preview. You can adjust column mapping before creating
+                  accounts.
+                </p>
+                <textarea
+                  value={pasteText}
+                  onChange={(e) => setPasteText(e.target.value)}
+                  placeholder={
+                    "Name\tUsername\tEmail\tPassword\tStudent ID\nChan Tai Men\tchantm\tchan@school.edu\tSecretPass1\t2A01"
+                  }
+                  disabled={phase === "importing"}
+                  rows={7}
+                  className="mt-3 w-full resize-y rounded-xl border border-slate-200 bg-white px-4 py-3 font-mono text-sm text-slate-900 outline-none focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5 disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  disabled={phase === "importing" || !pasteText.trim()}
+                  onClick={onApplyPaste}
+                  className={`${secondaryBtn} mt-3`}
+                >
+                  Preview pasted rows
+                </button>
+              </div>
               {matrix && tab === "paste" && (
                 <ColumnAndRowPreview
                   columnLabels={columnLabels}
@@ -406,8 +429,8 @@ export default function StudentImportDialog({
               )}
             </TabsContent>
 
-            <TabsContent value="type" className="mt-3">
-              <form onSubmit={(e) => void onManualSubmit(e)} className="grid gap-2.5 sm:grid-cols-2">
+            <TabsContent value="type" className="mt-4">
+              <form onSubmit={(e) => void onManualSubmit(e)} className="conet-surface grid gap-3 p-5 sm:grid-cols-2">
                 <input
                   value={manualName}
                   onChange={(e) => setManualName(e.target.value)}
@@ -453,11 +476,7 @@ export default function StudentImportDialog({
                   className={`${fieldClass} sm:col-span-2`}
                   autoComplete="new-password"
                 />
-                <button
-                  type="submit"
-                  disabled={phase === "importing" || !manualReady}
-                  className="h-9 w-full rounded-lg bg-slate-900 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50 sm:col-span-2"
-                >
+                <button type="submit" disabled={phase === "importing" || !manualReady} className={`${primaryBtn} sm:col-span-2`}>
                   {phase === "importing" ? "Creating…" : "Create account"}
                 </button>
               </form>
@@ -465,18 +484,31 @@ export default function StudentImportDialog({
           </Tabs>
         </div>
 
-        {(tab === "upload" || tab === "paste") && matrix && drafts.length > 0 && (
-          <div className="border-t border-slate-100 bg-slate-50/80 px-5 py-3">
-            <button
-              type="button"
-              disabled={phase === "importing" || selectedDrafts.length === 0}
-              onClick={() => void onImportSelected()}
-              className="h-10 w-full rounded-xl bg-slate-900 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-50"
-            >
-              {phase === "importing"
-                ? "Creating accounts…"
-                : `Create ${selectedDrafts.length} account${selectedDrafts.length === 1 ? "" : "s"}`}
-            </button>
+        {showBulkImport && (
+          <div className="shrink-0 border-t border-slate-200 bg-white px-6 py-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-slate-600">
+                {columnsConflict
+                  ? "Fix column mapping — each required field needs its own column."
+                  : drafts.length === 0
+                    ? "No complete rows yet. Check mapping and that each row has name, username, email, and password."
+                    : selectedDrafts.length === 0
+                      ? "Select at least one row to create accounts."
+                      : `${selectedDrafts.length} of ${drafts.length} row${drafts.length === 1 ? "" : "s"} ready to create.`}
+              </p>
+              <button
+                type="button"
+                disabled={!canCreateBulk}
+                onClick={() => void onImportSelected()}
+                className={`${primaryBtn} sm:max-w-xs sm:shrink-0`}
+              >
+                {phase === "importing"
+                  ? "Creating accounts…"
+                  : selectedDrafts.length > 0
+                    ? `Create ${selectedDrafts.length} account${selectedDrafts.length === 1 ? "" : "s"}`
+                    : "Create accounts"}
+              </button>
+            </div>
           </div>
         )}
       </DialogContent>
@@ -500,13 +532,13 @@ function ColumnSelect({
   allowNone?: boolean
 }) {
   return (
-    <label className="block text-[11px] font-medium text-slate-500">
+    <label className="block text-xs font-medium text-slate-600">
       {label}
       <select
         value={value}
         disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))}
-        className="mt-1 h-8 w-full rounded-lg border border-slate-200 bg-white px-2 text-xs text-slate-900"
+        className="mt-1.5 h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-900"
       >
         {allowNone && <option value={-1}>Not mapped</option>}
         {labels.map((colLabel, index) => (
@@ -550,18 +582,24 @@ function ColumnAndRowPreview({
   const studentIdValue = columns.studentIdCol ?? -1
 
   return (
-    <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-      <label className="flex items-center gap-1.5 text-xs text-slate-600">
+    <div className="conet-surface space-y-4 overflow-hidden p-0">
+      <div className="border-b border-slate-100 bg-slate-50/80 px-4 py-3 sm:px-5">
+        <p className="text-sm font-semibold text-slate-900">Review import</p>
+        <p className="mt-0.5 text-xs text-slate-500">Map columns, then select rows to create student accounts.</p>
+      </div>
+
+      <div className="space-y-4 px-4 pb-4 sm:px-5">
+      <label className="flex items-center gap-2 text-sm text-slate-700">
         <input
           type="checkbox"
           checked={hasHeaderRow}
           disabled={disabled}
           onChange={(e) => onHasHeaderRow(e.target.checked)}
-          className="h-3.5 w-3.5 rounded border-slate-300"
+          className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
         />
         First row is header
       </label>
-      <div className="grid grid-cols-2 gap-2">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <ColumnSelect
           label="Name"
           value={columns.nameCol}
@@ -601,51 +639,73 @@ function ColumnAndRowPreview({
       </div>
 
       {columnsConflict && (
-        <p className="text-xs text-amber-800">Name, username, email, and password must use four different columns.</p>
+        <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
+          Name, username, email, and password must use four different columns.
+        </p>
       )}
 
       {drafts.length === 0 ? (
-        <p className="py-4 text-center text-xs text-slate-500">
+        <p className="rounded-xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-500">
           No complete rows in those columns. Each row needs name, username, email, and password.
         </p>
       ) : (
         <>
           <div className="flex items-center justify-between gap-2">
-            <label className="flex items-center gap-1.5 text-xs font-medium text-slate-600">
+            <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
               <input
                 type="checkbox"
                 checked={allSelected}
                 disabled={disabled}
                 onChange={() => onToggleAll(!allSelected)}
-                className="h-3.5 w-3.5 rounded border-slate-300"
+                className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
               />
               Select all ({drafts.length})
             </label>
-            <span className="text-[11px] text-slate-400">{selectedKeys.size} selected</span>
+            <span className="text-xs font-medium text-slate-500">{selectedKeys.size} selected</span>
           </div>
-          <ul className="max-h-44 space-y-1 overflow-y-auto rounded-lg border border-slate-100 bg-slate-50/50 p-1">
-            {drafts.map((row) => {
-              const key = draftKey(row)
-              return (
-                <li key={key}>
-                  <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-white">
-                    <input
-                      type="checkbox"
-                      checked={selectedKeys.has(key)}
-                      disabled={disabled}
-                      onChange={() => onToggleRow(key)}
-                      className="h-3.5 w-3.5 shrink-0 rounded border-slate-300"
-                    />
-                    <span className="min-w-0 flex-1 truncate font-medium text-slate-900">{row.name}</span>
-                    <span className="hidden shrink-0 font-mono text-[10px] text-slate-500 sm:inline">{row.username}</span>
-                    <span className="shrink-0 truncate font-mono text-[10px] text-slate-400 max-w-[8rem]">{row.email}</span>
-                  </label>
-                </li>
-              )
-            })}
-          </ul>
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="min-w-full text-left text-sm">
+              <thead className="border-b border-slate-200 bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                <tr>
+                  <th className="w-10 px-3 py-2.5" aria-label="Select" />
+                  <th className="px-3 py-2.5">Name</th>
+                  <th className="px-3 py-2.5">Username</th>
+                  <th className="px-3 py-2.5">Email</th>
+                  <th className="hidden px-3 py-2.5 md:table-cell">Student ID</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 bg-white">
+                {drafts.map((row) => {
+                  const key = draftKey(row)
+                  return (
+                    <tr key={key} className="hover:bg-slate-50/80">
+                      <td className="px-3 py-2.5">
+                        <input
+                          type="checkbox"
+                          checked={selectedKeys.has(key)}
+                          disabled={disabled}
+                          onChange={() => onToggleRow(key)}
+                          aria-label={`Select ${row.name}`}
+                          className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-400"
+                        />
+                      </td>
+                      <td className="px-3 py-2.5 font-medium text-slate-900">{row.name}</td>
+                      <td className="px-3 py-2.5 font-mono text-xs text-slate-600">{row.username}</td>
+                      <td className="max-w-[12rem] truncate px-3 py-2.5 font-mono text-xs text-slate-600 sm:max-w-none">
+                        {row.email}
+                      </td>
+                      <td className="hidden px-3 py-2.5 font-mono text-xs text-slate-500 md:table-cell">
+                        {row.studentId || "—"}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
+      </div>
     </div>
   )
 }
