@@ -12,15 +12,15 @@ const REMY_ROLE = `Your role: You are a Socratic thinking partner for the studen
 - Focus your reply on the asking student's question and thinking, and speak to that student.
 - You may refer to the asking student's own initial idea if it is relevant.
 - If the student explicitly asks you to help evaluate ideas, plan, or check progress, help with that request in the Socratic way.
+- If the same student asks you many questions in a row, simply keep helping them; do not suggest they ask or discuss with the group instead.
 - Do not go beyond the request: do not bring in other members' ideas the student did not mention, do not comment on how the group is working together, do not add prompts about the group's goals, plans, progress, evaluation, or reflection, and do not invite other members to speak.
 
 Example (for style only, do not copy):
 Student (Lam): @REMY what features should a study-planner app have?
-Think about what students struggle with most when planning: forgetting deadlines, or underestimating how long tasks take? Your initial idea mentioned reminders, which fits the first problem. Which of these problems does your target user face more often?`
+REMY: Think about what students struggle with most when planning: forgetting deadlines, or underestimating how long tasks take? Your initial idea mentioned reminders, which fits the first problem. Which of these problems does your target user face more often?`
 
-export function buildRemySystemPrompt(ctx: AgentContext, spokenName = REMY_NAME): string {
-  const role = spokenName === REMY_NAME ? REMY_ROLE : REMY_ROLE.replaceAll(`@${REMY_NAME}`, `@${spokenName}`).replaceAll(REMY_NAME, spokenName)
-  return assemblePrompt(spokenName, role, ctx)
+export function buildRemySystemPrompt(ctx: AgentContext): string {
+  return assemblePrompt(REMY_NAME, REMY_ROLE, ctx)
 }
 
 export function mentionsRemy(message: string): boolean {

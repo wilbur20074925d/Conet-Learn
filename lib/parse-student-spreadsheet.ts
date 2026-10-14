@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx"
+import { INITIAL_STUDENT_PASSWORD } from "./student-password"
 
 export type ParsedStudentRow = {
   name: string
@@ -14,9 +15,11 @@ export type ParsedStudentDraft = ParsedStudentRow & {
 
 export type StudentImportColumns = {
   nameCol: number
-  usernameCol: number
+  /** null = derive from email local part */
+  usernameCol: number | null
   emailCol: number
-  passwordCol: number
+  /** null = use default student password (or student ID if long enough) */
+  passwordCol: number | null
   studentIdCol: number | null
 }
 
@@ -33,6 +36,25 @@ const USERNAME_HEADERS = new Set(["username", "login", "handle", "userid", "用�
 const EMAIL_HEADERS = new Set(["email", "mail", "e-mail", "邮箱", "电子邮件"])
 const PASSWORD_HEADERS = new Set(["password", "pass", "pwd", "initialpassword", "密码"])
 const ID_HEADERS = new Set(["id", "studentid", "studentno", "sid", "学号", "编号", "studentnumber"])
+
+function looksLikeEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim())
+}
+
+function deriveUsername(email: string, fallbackName: string) {
+  const local = email.split("@")[0]?.trim().replace(/[^a-zA-Z0-9._-]/g, "") || ""
+  if (local.length >= 1) return local.slice(0, 64)
+  const fromName = fallbackName.toLowerCase().replace(/\s+/g, "").slice(0, 64)
+  return fromName || "student"
+}
+
+function resolveImportPassword(raw: string, studentId: string | null) {
+  const pwd = raw.trim()
+  if (pwd.length >= 8) return pwd
+  const sid = studentId?.trim() ?? ""
+  if (sid.length >= 8) return sid
+  return INITIAL_STUDENT_PASSWORD
+}
 
 function normalizeMatrix(raw: (string | number)[][]): string[][] {
   const maxCols = raw.reduce((max, row) => Math.max(max, row.length), 0)
@@ -97,54 +119,156 @@ export function parseDelimitedClipboard(text: string): string[][] {
   return normalizeMatrix(matrix).filter((row) => row.some((cell) => cell.length > 0))
 }
 
-function pickUniqueIndices(preferred: number[], width: number) {
-  const used = new Set<number>()
-  const result: number[] = []
-  for (const index of preferred) {
-    let i = index
-    while (i < width && used.has(i)) i += 1
-    if (i >= width) i = 0
-    while (used.has(i) && i < width) i += 1
-    if (i < width) {
-      used.add(i)
-      result.push(i)
-    } else result.push(-1)
+function emailColumnScore(matrix: string[][], col: number, startRow: number) {
+  let score = 0
+  const end = Math.min(matrix.length, startRow + 10)
+  for (let i = startRow; i < end; i += 1) {
+    if (looksLikeEmail(matrix[i][col] ?? "")) score += 1
   }
-  return result
+  return score
+}
+
+function pickStudentIdColumn(
+  matrix: string[][],
+  startRow: number,
+  width: number,
+  used: Set<number>
+): number | null {
+  for (let c = 0; c < width; c += 1) {
+    if (used.has(c)) continue
+    const sample = cellToString(matrix[startRow]?.[c])
+    if (sample.length < 4 || looksLikeEmail(sample)) continue
+    if (/^[0-9][A-Za-z][0-9]{2}$/.test(sample)) continue
+    return c
+  }
+  return null
 }
 
 export function guessStudentImportColumns(headers: string[]): StudentImportColumns {
+  const width = headers.length
   let nameCol = 0
-  let usernameCol = 1
-  let emailCol = 2
-  let passwordCol = 3
-  let studentIdCol: number | null = 4
+  let emailCol = width > 1 ? 1 : 0
+  let usernameCol: number | null = width > 3 ? 1 : null
+  let passwordCol: number | null = width > 3 ? 3 : null
+  let studentIdCol: number | null = width > 2 ? 2 : null
+
+  let foundEmail = false
+  let foundPassword = false
 
   for (let i = 0; i < headers.length; i += 1) {
     const norm = normalizeHeader(headers[i])
     if (NAME_HEADERS.has(norm)) nameCol = i
     if (USERNAME_HEADERS.has(norm)) usernameCol = i
-    if (EMAIL_HEADERS.has(norm)) emailCol = i
-    if (PASSWORD_HEADERS.has(norm)) passwordCol = i
+    if (EMAIL_HEADERS.has(norm)) {
+      emailCol = i
+      foundEmail = true
+    }
+    if (PASSWORD_HEADERS.has(norm)) {
+      passwordCol = i
+      foundPassword = true
+    }
     if (ID_HEADERS.has(norm)) studentIdCol = i
   }
 
-  const width = headers.length
-  if (width >= 4) {
-    const [n, u, e, p] = pickUniqueIndices([nameCol, usernameCol, emailCol, passwordCol], width)
-    nameCol = n
-    usernameCol = u
-    emailCol = e
-    passwordCol = p
-    if (studentIdCol !== null) {
-      const [sid] = pickUniqueIndices([studentIdCol], width)
-      studentIdCol = sid >= 0 ? sid : null
-    }
-  } else {
-    studentIdCol = null
+  if (foundEmail && !foundPassword) {
+    usernameCol = usernameCol !== null && usernameCol !== emailCol ? usernameCol : null
+    passwordCol = null
   }
 
+  if (usernameCol === emailCol) usernameCol = null
+
   return { nameCol, usernameCol, emailCol, passwordCol, studentIdCol }
+}
+
+export function matrixLikelyHasHeaderRow(matrix: string[][]): boolean {
+  if (matrix.length < 2) return false
+
+  const headerish = (row: string[]) =>
+    row.some((cell) => {
+      const norm = normalizeHeader(cell)
+      return (
+        NAME_HEADERS.has(norm) ||
+        EMAIL_HEADERS.has(norm) ||
+        USERNAME_HEADERS.has(norm) ||
+        PASSWORD_HEADERS.has(norm) ||
+        ID_HEADERS.has(norm)
+      )
+    })
+
+  if (headerish(matrix[0]) && !headerish(matrix[1])) return true
+
+  const emailCount = (row: string[]) => row.filter((cell) => looksLikeEmail(cell)).length
+  if (emailCount(matrix[0]) >= 1 && emailCount(matrix[1]) >= 1) return false
+  if (emailCount(matrix[0]) === 0 && emailCount(matrix[1]) >= 1) return false
+
+  return headerish(matrix[0])
+}
+
+export function guessStudentImportColumnsFromMatrix(matrix: string[][], hasHeaderRow: boolean): StudentImportColumns {
+  const width = matrix.reduce((max, row) => Math.max(max, row.length), 0)
+  if (width === 0) {
+    return { nameCol: 0, usernameCol: null, emailCol: 0, passwordCol: null, studentIdCol: null }
+  }
+
+  const headerLabels =
+    hasHeaderRow && matrix.length > 0
+      ? matrix[0].map((cell, index) => cellToString(cell) || `Column ${index + 1}`)
+      : Array.from({ length: width }, (_, index) => `Column ${index + 1}`)
+
+  let columns = guessStudentImportColumns(headerLabels)
+  const startRow = hasHeaderRow ? 1 : 0
+  if (startRow >= matrix.length) return columns
+
+  let bestEmailCol = columns.emailCol
+  let bestScore = 0
+  for (let c = 0; c < width; c += 1) {
+    const score = emailColumnScore(matrix, c, startRow)
+    if (score > bestScore) {
+      bestScore = score
+      bestEmailCol = c
+    }
+  }
+
+  if (bestScore > 0) {
+    columns.emailCol = bestEmailCol
+    if (!looksLikeEmail(matrix[startRow][columns.nameCol] ?? "") && bestEmailCol !== 0) {
+      columns.nameCol = 0
+    } else if (looksLikeEmail(matrix[startRow][0] ?? "") && bestEmailCol === 0 && width > 1) {
+      columns.nameCol = 1
+    }
+  }
+
+  const used = new Set<number>([columns.nameCol, columns.emailCol])
+  if (columns.usernameCol !== null) used.add(columns.usernameCol)
+  if (columns.passwordCol !== null) used.add(columns.passwordCol)
+  if (columns.studentIdCol !== null) used.add(columns.studentIdCol)
+
+  if (columns.studentIdCol === null || columns.studentIdCol === columns.emailCol) {
+    const sid = pickStudentIdColumn(matrix, startRow, width, used)
+    if (sid !== null) columns.studentIdCol = sid
+  }
+
+  if (columns.passwordCol !== null) {
+    const sample = cellToString(matrix[startRow][columns.passwordCol])
+    const headerNorm = normalizeHeader(headerLabels[columns.passwordCol] ?? "")
+    if (
+      sample.length > 0 &&
+      sample.length < 8 &&
+      !PASSWORD_HEADERS.has(headerNorm)
+    ) {
+      columns.passwordCol = null
+    }
+  }
+
+  if (columns.usernameCol === columns.emailCol || columns.usernameCol === columns.nameCol) {
+    columns.usernameCol = null
+  }
+
+  if (!columns.passwordCol && !PASSWORD_HEADERS.has(normalizeHeader(headerLabels[columns.emailCol] ?? ""))) {
+    columns.passwordCol = null
+  }
+
+  return columns
 }
 
 export function matrixColumnLabels(matrix: string[][], hasHeaderRow: boolean): string[] {
@@ -161,8 +285,13 @@ export function draftRowsFromMatrix(
 ): ParsedStudentDraft[] {
   const { hasHeaderRow, columns } = options
   const { nameCol, usernameCol, emailCol, passwordCol, studentIdCol } = columns
-  const required = [nameCol, usernameCol, emailCol, passwordCol]
-  if (matrix.length === 0 || required.some((col) => col < 0) || new Set(required).size !== required.length) {
+
+  const mapped = [nameCol, emailCol]
+  if (usernameCol !== null && usernameCol >= 0) mapped.push(usernameCol)
+  if (passwordCol !== null && passwordCol >= 0) mapped.push(passwordCol)
+  if (studentIdCol !== null && studentIdCol >= 0) mapped.push(studentIdCol)
+
+  if (matrix.length === 0 || nameCol < 0 || emailCol < 0 || new Set(mapped).size !== mapped.length) {
     return []
   }
 
@@ -172,12 +301,19 @@ export function draftRowsFromMatrix(
   for (let i = start; i < matrix.length; i += 1) {
     const line = matrix[i]
     const name = cellToString(line[nameCol])
-    const username = cellToString(line[usernameCol])
     const email = cellToString(line[emailCol])
-    const password = cellToString(line[passwordCol])
     const studentId =
       studentIdCol !== null && studentIdCol >= 0 ? cellToString(line[studentIdCol]) || null : null
-    if (!name || !username || !email || !password) continue
+
+    if (!name || !email || !looksLikeEmail(email)) continue
+
+    let username =
+      usernameCol !== null && usernameCol >= 0 ? cellToString(line[usernameCol]) : deriveUsername(email, name)
+    if (!username.trim()) username = deriveUsername(email, name)
+
+    const passwordRaw = passwordCol !== null && passwordCol >= 0 ? cellToString(line[passwordCol]) : ""
+    const password = resolveImportPassword(passwordRaw, studentId)
+
     drafts.push({ name, username, email, password, studentId, sourceIndex: i })
   }
 
@@ -188,7 +324,7 @@ export function parseStudentSpreadsheet(buffer: ArrayBuffer): ParsedStudentRow[]
   const matrix = readStudentFileMatrix(buffer)
   if (matrix.length === 0) return []
 
-  const columns = guessStudentImportColumns(matrix[0])
+  const columns = guessStudentImportColumnsFromMatrix(matrix, true)
   return draftRowsFromMatrix(matrix, { hasHeaderRow: true, columns }).map(
     ({ name, username, email, password, studentId }) => ({
       name,

@@ -14,7 +14,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { loadTeacherSession, type OpenedTeacherSession } from "@/lib/open-session"
-import type { CatalogClass, CatalogGroup } from "@/lib/catalog"
+import type { CatalogClass, CatalogGroup, CatalogStudent } from "@/lib/catalog"
 
 export default function TeacherDashboardScreen({
   name,
@@ -29,7 +29,7 @@ export default function TeacherDashboardScreen({
   profileId: string
   classes: CatalogClass[]
   looseGroups: CatalogGroup[]
-  students: { id: string; name: string }[]
+  students: CatalogStudent[]
   initialSession?: OpenedTeacherSession | null
   initialView?: "note" | "post"
 }) {

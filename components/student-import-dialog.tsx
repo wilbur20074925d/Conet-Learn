@@ -15,13 +15,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { createStudentAccount, type CreateStudentInput, type ImportRowResult } from "@/lib/account-actions"
 import {
   draftRowsFromMatrix,
-  guessStudentImportColumns,
+  guessStudentImportColumnsFromMatrix,
   matrixColumnLabels,
+  matrixLikelyHasHeaderRow,
   parseDelimitedClipboard,
   readStudentFileMatrix,
   type ParsedStudentDraft,
   type StudentImportColumns,
 } from "@/lib/parse-student-spreadsheet"
+import { INITIAL_STUDENT_PASSWORD } from "@/lib/student-password"
 
 const fieldClass =
   "h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-slate-400 focus:ring-4 focus:ring-slate-900/5"
@@ -34,10 +36,10 @@ const secondaryBtn =
 
 const DEFAULT_COLUMNS: StudentImportColumns = {
   nameCol: 0,
-  usernameCol: 1,
-  emailCol: 2,
-  passwordCol: 3,
-  studentIdCol: 4,
+  usernameCol: null,
+  emailCol: 1,
+  passwordCol: null,
+  studentIdCol: 2,
 }
 
 type ImportPhase = "idle" | "importing" | "done"
@@ -106,8 +108,7 @@ export default function StudentImportDialog({
   function remapHeaderRow(nextHasHeader: boolean) {
     setHasHeaderRow(nextHasHeader)
     if (!matrix) return
-    const header = nextHasHeader ? matrix[0] : matrix[0].map((_, i) => `Column ${i + 1}`)
-    const guess = guessStudentImportColumns(header)
+    const guess = guessStudentImportColumnsFromMatrix(matrix, nextHasHeader)
     setColumns(guess)
     const nextDrafts = draftRowsFromMatrix(matrix, { hasHeaderRow: nextHasHeader, columns: guess })
     selectAllDraftKeys(nextDrafts)
@@ -134,16 +135,17 @@ export default function StudentImportDialog({
 
   function applyMatrix(next: string[][]) {
     if (next.length === 0) {
-      setParseError("No rows found. Include columns for name, username, email, and password.")
+      setParseError("No rows found. Include at least name and email columns (username and password can be filled in automatically).")
       setMatrix(null)
       return
     }
     setParseError("")
     setMatrix(next)
-    const header = hasHeaderRow ? next[0] : next[0].map((_, i) => `Column ${i + 1}`)
-    const guess = guessStudentImportColumns(header)
+    const detectedHeader = matrixLikelyHasHeaderRow(next)
+    setHasHeaderRow(detectedHeader)
+    const guess = guessStudentImportColumnsFromMatrix(next, detectedHeader)
     setColumns(guess)
-    const initial = draftRowsFromMatrix(next, { hasHeaderRow, columns: guess })
+    const initial = draftRowsFromMatrix(next, { hasHeaderRow: detectedHeader, columns: guess })
     selectAllDraftKeys(initial)
   }
 
@@ -247,8 +249,14 @@ export default function StudentImportDialog({
     manualEmail.trim() &&
     manualPassword.length >= 8
 
-  const requiredCols = [columns.nameCol, columns.usernameCol, columns.emailCol, columns.passwordCol]
-  const columnsConflict = new Set(requiredCols).size !== requiredCols.length
+  const mappedCols = [
+    columns.nameCol,
+    columns.emailCol,
+    ...(columns.usernameCol !== null ? [columns.usernameCol] : []),
+    ...(columns.passwordCol !== null ? [columns.passwordCol] : []),
+    ...(columns.studentIdCol !== null ? [columns.studentIdCol] : []),
+  ]
+  const columnsConflict = new Set(mappedCols).size !== mappedCols.length
 
   const showBulkImport = (tab === "upload" || tab === "paste") && matrix !== null
   const canCreateBulk =
@@ -275,8 +283,8 @@ export default function StudentImportDialog({
         <DialogHeader className="shrink-0 space-y-2 border-b border-slate-200 bg-white px-6 py-5 text-left">
           <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">Add student accounts</DialogTitle>
           <DialogDescription className="max-w-2xl text-sm leading-relaxed text-slate-500">
-            Each student needs a display name, username, email, and password (min. 8 characters). They sign in with
-            email and password. Student ID is optional and used for class rosters only.
+            Each student needs a display name and email. Username can be taken from the email; if you omit a password
+            column, new accounts use the default password ({INITIAL_STUDENT_PASSWORD}). Student ID is optional.
           </DialogDescription>
         </DialogHeader>
 
@@ -364,7 +372,7 @@ export default function StudentImportDialog({
                 <FileSpreadsheet className="h-10 w-10 text-slate-400" />
                 <span className="text-base font-semibold text-slate-900">Choose CSV or spreadsheet</span>
                 <span className="max-w-md text-sm text-slate-500">
-                  Columns: name, username, email, password (+ optional student ID)
+                  Columns: name and email required; username, password, and student ID optional
                 </span>
               </button>
               {matrix && tab === "upload" && (
@@ -491,7 +499,7 @@ export default function StudentImportDialog({
                 {columnsConflict
                   ? "Fix column mapping — each required field needs its own column."
                   : drafts.length === 0
-                    ? "No complete rows yet. Check mapping and that each row has name, username, email, and password."
+                    ? "No complete rows yet. Check mapping — each row needs a name and a valid email."
                     : selectedDrafts.length === 0
                       ? "Select at least one row to create accounts."
                       : `${selectedDrafts.length} of ${drafts.length} row${drafts.length === 1 ? "" : "s"} ready to create.`}
@@ -523,6 +531,7 @@ function ColumnSelect({
   disabled,
   onChange,
   allowNone,
+  noneLabel = "Not mapped",
 }: {
   label: string
   value: number
@@ -530,6 +539,7 @@ function ColumnSelect({
   disabled: boolean
   onChange: (n: number) => void
   allowNone?: boolean
+  noneLabel?: string
 }) {
   return (
     <label className="block text-xs font-medium text-slate-600">
@@ -540,7 +550,7 @@ function ColumnSelect({
         onChange={(e) => onChange(Number(e.target.value))}
         className="mt-1.5 h-9 w-full rounded-lg border border-slate-200 bg-white px-2.5 text-sm text-slate-900"
       >
-        {allowNone && <option value={-1}>Not mapped</option>}
+        {allowNone && <option value={-1}>{noneLabel}</option>}
         {labels.map((colLabel, index) => (
           <option key={`${label}-${index}`} value={index}>
             {colLabel}
@@ -609,10 +619,12 @@ function ColumnAndRowPreview({
         />
         <ColumnSelect
           label="Username"
-          value={columns.usernameCol}
+          value={columns.usernameCol ?? -1}
           labels={columnLabels}
           disabled={disabled}
-          onChange={(n) => onColumn("usernameCol", n)}
+          allowNone
+          noneLabel="Auto (from email)"
+          onChange={(n) => onColumn("usernameCol", n < 0 ? null : n)}
         />
         <ColumnSelect
           label="Email"
@@ -623,10 +635,12 @@ function ColumnAndRowPreview({
         />
         <ColumnSelect
           label="Password"
-          value={columns.passwordCol}
+          value={columns.passwordCol ?? -1}
           labels={columnLabels}
           disabled={disabled}
-          onChange={(n) => onColumn("passwordCol", n)}
+          allowNone
+          noneLabel={`Default (${INITIAL_STUDENT_PASSWORD})`}
+          onChange={(n) => onColumn("passwordCol", n < 0 ? null : n)}
         />
         <ColumnSelect
           label="Student ID"
@@ -640,13 +654,13 @@ function ColumnAndRowPreview({
 
       {columnsConflict && (
         <p className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-800">
-          Name, username, email, and password must use four different columns.
+          Each mapped column must be different. Name and email cannot share a column.
         </p>
       )}
 
       {drafts.length === 0 ? (
         <p className="rounded-xl border border-dashed border-slate-200 py-8 text-center text-sm text-slate-500">
-          No complete rows in those columns. Each row needs name, username, email, and password.
+          No complete rows in those columns. Each row needs a display name and a valid email address.
         </p>
       ) : (
         <>

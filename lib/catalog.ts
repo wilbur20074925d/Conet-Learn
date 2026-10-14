@@ -16,6 +16,9 @@ export type CatalogGroup = {
 export type CatalogStudent = {
   id: string
   name: string
+  email?: string | null
+  username?: string | null
+  studentId?: string | null
 }
 
 export type CatalogSession = {

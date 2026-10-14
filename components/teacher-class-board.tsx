@@ -1,12 +1,12 @@
 "use client"
 
-import { FormEvent, useEffect, useRef, useState, type ReactNode } from "react"
+import { FormEvent, useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { useRouter } from "next/navigation"
 import { ArrowRight, Copy, Pencil, Plus, Trash2 } from "lucide-react"
 import NateModeSwitch from "@/components/nate-mode-switch"
 import PendingLink from "@/components/pending-link"
 import SessionArtwork, { artworkIndexes } from "@/components/session-artwork"
-import ManageStudentsDialog from "@/components/manage-students-dialog"
+import ManageStudentsDialog, { type ManageStudent } from "@/components/manage-students-dialog"
 import SessionMaterialsButton from "@/components/session-materials-button"
 import {
   Dialog,
@@ -531,6 +531,33 @@ function notYetPlaced(students: CatalogStudent[], placed: { id: string }[]) {
   return students.filter((student) => !ids.has(student.id))
 }
 
+function classNameByStudentId(classes: CatalogClass[]) {
+  const map = new Map<string, string>()
+  for (const classroom of classes) {
+    for (const student of classroom.students) {
+      map.set(student.id, classroom.name)
+    }
+  }
+  return map
+}
+
+function toManageStudent(
+  student: { id: string; name: string; email?: string | null; username?: string | null; studentId?: string | null },
+  profiles: Map<string, CatalogStudent>,
+  courseByStudent: Map<string, string>,
+  courseOverride?: string | null
+): ManageStudent {
+  const profile = profiles.get(student.id)
+  return {
+    id: student.id,
+    name: profile?.name ?? student.name,
+    email: profile?.email ?? student.email ?? null,
+    username: profile?.username ?? student.username ?? null,
+    studentId: profile?.studentId ?? student.studentId ?? null,
+    courseName: courseOverride !== undefined ? courseOverride : courseByStudent.get(student.id) ?? null,
+  }
+}
+
 export default function TeacherClassBoard({
   classes,
   looseGroups,
@@ -540,7 +567,7 @@ export default function TeacherClassBoard({
 }: {
   classes: CatalogClass[]
   looseGroups: CatalogGroup[]
-  students: { id: string; name: string }[]
+  students: CatalogStudent[]
   onOpen?: (groupId: string, chatSessionId: string | null) => void
   openingId?: string | null
 }) {
@@ -564,6 +591,19 @@ export default function TeacherClassBoard({
 
   const allSessions = board.classes.flatMap((item) => item.sessions)
   const art = artworkIndexes(board.classes)
+  const studentProfiles = useMemo(() => new Map(students.map((student) => [student.id, student])), [students])
+  const courseByStudent = useMemo(() => classNameByStudentId(board.classes), [board.classes])
+  const courseOptions = useMemo(
+    () => board.classes.map((classroom) => ({ id: classroom.id, name: classroom.name })),
+    [board.classes]
+  )
+
+  function manageStudents(
+    list: CatalogStudent[],
+    courseOverride?: string | null
+  ): ManageStudent[] {
+    return list.map((student) => toManageStudent(student, studentProfiles, courseByStudent, courseOverride))
+  }
 
   function showNotice(message: string) {
     setNotice(message)
@@ -628,8 +668,10 @@ export default function TeacherClassBoard({
           <ManageStudentsDialog
             title={`Manage students in ${session.title}`}
             description={`Add students from ${classroom.name}, or move them out of this session. A student can be in more than one session of their class.`}
-            available={notYetPlaced(classroom.students, session.students)}
-            enrolled={session.students}
+            context="session"
+            currentCourseName={classroom.name}
+            available={manageStudents(notYetPlaced(classroom.students, session.students), classroom.name)}
+            enrolled={manageStudents(session.students, classroom.name)}
             onAdd={(chosen) => {
               if (stillSaving(session.id) || chosen.length === 0) return
               perform(
@@ -740,15 +782,24 @@ export default function TeacherClassBoard({
                   <ManageStudentsDialog
                     title={`Manage students in ${group.name}`}
                     description="Add students from this session, or move them out of this group. Each student can be in one group for this session."
-                    available={session.students
-                      .filter((student) => !group.members.some((member) => member.id === student.id))
-                      .map((student) => {
-                        const current = session.groups.find(
-                          (item) => item.id !== group.id && item.members.some((member) => member.id === student.id)
-                        )
-                        return current ? { ...student, name: `${student.name} (in ${current.name})` } : student
-                      })}
-                    enrolled={group.members.map((member) => ({ id: member.id, name: member.name }))}
+                    context="group"
+                    currentCourseName={classroom.name}
+                    available={manageStudents(
+                      session.students
+                        .filter((student) => !group.members.some((member) => member.id === student.id))
+                        .map((student) => {
+                          const current = session.groups.find(
+                            (item) =>
+                              item.id !== group.id && item.members.some((member) => member.id === student.id)
+                          )
+                          return current ? { ...student, name: `${student.name} (in ${current.name})` } : student
+                        }),
+                      classroom.name
+                    )}
+                    enrolled={manageStudents(
+                      group.members.map((member) => ({ id: member.id, name: member.name })),
+                      classroom.name
+                    )}
                     onAdd={(chosen) => {
                       if (stillSaving(group.id) || chosen.length === 0) return
                       const clean = chosen.map((student) => {
@@ -834,11 +885,15 @@ export default function TeacherClassBoard({
               <ManageStudentsDialog
                 title={`Manage students in ${classroom.name}`}
                 description="Add students into this class, or move students out. A student can belong to only one class. Moving a student out also removes them from its sessions and groups."
-                available={notYetPlaced(
-                  students,
-                  board.classes.flatMap((item) => item.students)
+                context="class"
+                currentCourseId={classroom.id}
+                currentCourseName={classroom.name}
+                courseOptions={courseOptions}
+                available={manageStudents(
+                  students.filter((student) => courseByStudent.get(student.id) !== classroom.name)
                 )}
-                enrolled={classroom.students}
+                isRowSelectable={(student) => !student.courseName}
+                enrolled={manageStudents(classroom.students, classroom.name)}
                 onAdd={(chosen) => {
                   if (stillSaving(classroom.id) || chosen.length === 0) return
                   perform(

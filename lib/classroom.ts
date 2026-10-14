@@ -38,7 +38,8 @@ export type ClassroomStudent = {
   id: string
   name: string
   email: string | null
-  studentId?: string | null
+  username: string | null
+  studentId: string | null
 }
 
 function notReady(error: { code?: string; message?: string } | null) {
@@ -126,7 +127,11 @@ export const getTeacherBoard = cache(async function getTeacherBoard(): Promise<
       .from("ConetSessions")
       .select("id, group_id, title, created_at, created_by")
       .order("created_at", { ascending: false }),
-    supabase.from("ConetUsers").select("id, name, email, student_id").eq("role", "student").order("name", { ascending: true }),
+    supabase
+      .from("ConetUsers")
+      .select("id, name, email, username, student_id")
+      .eq("role", "student")
+      .order("name", { ascending: true }),
   ])
 
   const error = groupsQuery.error || membersQuery.error || sessionsQuery.error || studentsQuery.error
@@ -182,12 +187,14 @@ export const getTeacherBoard = cache(async function getTeacherBoard(): Promise<
       id: string
       name: string
       email: string | null
+      username: string | null
       student_id: string | null
     }>
   ).map((student) => ({
     id: student.id,
     name: student.name,
     email: student.email,
+    username: student.username,
     studentId: student.student_id,
   }))
   const waiting = students.filter((student) => !placed.has(student.id)).map((student) => ({

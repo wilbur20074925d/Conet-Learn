@@ -92,8 +92,23 @@ function ideaText(raw: string | null | undefined): string {
 }
 
 function systemPrompt(mode: NateMode, ctx: AgentContext): string {
-  if (mode === 2) return buildRemySystemPrompt(ctx, AGENT_DISPLAY_NAME)
-  return buildNateSystemPrompt(ctx, AGENT_DISPLAY_NAME)
+  const built = mode === 2 ? buildRemySystemPrompt(ctx) : buildNateSystemPrompt(ctx)
+  return speakAsRemy(built)
+}
+
+// Students always address the teammate as Remy. The prompt files name the two
+// conditions NATE and REMY; rename those labels only, and leave notes and materials alone.
+function speakAsRemy(prompt: string): string {
+  const marker = "\n\nCourse context:"
+  const splitAt = prompt.indexOf(marker)
+  const head = splitAt === -1 ? prompt : prompt.slice(0, splitAt)
+  const tail = splitAt === -1 ? "" : prompt.slice(splitAt)
+  const renamed = head
+    .replaceAll("@NATE", `@${AGENT_DISPLAY_NAME}`)
+    .replaceAll("@REMY", `@${AGENT_DISPLAY_NAME}`)
+    .replaceAll("NATE", AGENT_DISPLAY_NAME)
+    .replaceAll("REMY", AGENT_DISPLAY_NAME)
+  return renamed + tail
 }
 
 export async function requestNateReply(

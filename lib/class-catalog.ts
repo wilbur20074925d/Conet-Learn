@@ -2,7 +2,7 @@ import "server-only"
 
 import { canonicalSession } from "@/lib/canonical-session"
 import { getTeacherBoard } from "@/lib/classroom"
-import type { CatalogClass, CatalogGroup } from "@/lib/catalog"
+import type { CatalogClass, CatalogGroup, CatalogStudent } from "@/lib/catalog"
 import { createClient } from "@/lib/supabase/server"
 
 function missingCatalog(error: { code?: string; message?: string } | null) {
@@ -23,7 +23,7 @@ export async function getClassCatalog(): Promise<
       classes: CatalogClass[]
       looseGroups: CatalogGroup[]
       waiting: { id: string; name: string }[]
-      students: { id: string; name: string }[]
+      students: CatalogStudent[]
     }
   | { ok: false; error: string; needsSetup?: boolean }
 > {
@@ -73,10 +73,21 @@ export async function getClassCatalog(): Promise<
   }))
   const byId = new Map(groups.map((group) => [group.id, group]))
 
-  const nameOf = new Map(board.students.map((student) => [student.id, student.name]))
+  const profileOf = new Map(
+    board.students.map((student) => [
+      student.id,
+      {
+        id: student.id,
+        name: student.name,
+        email: student.email,
+        username: student.username,
+        studentId: student.studentId,
+      },
+    ])
+  )
   function roster(ids: string[]) {
     return ids
-      .map((id) => ({ id, name: nameOf.get(id) || "Student" }))
+      .map((id) => profileOf.get(id) || { id, name: "Student" })
       .sort((a, b) => a.name.localeCompare(b.name))
   }
   const classStudentIds = new Map<string, string[]>()
@@ -144,6 +155,12 @@ export async function getClassCatalog(): Promise<
     classes,
     looseGroups,
     waiting: board.waiting,
-    students: board.students.map((student) => ({ id: student.id, name: student.name })),
+    students: board.students.map((student) => ({
+      id: student.id,
+      name: student.name,
+      email: student.email,
+      username: student.username,
+      studentId: student.studentId,
+    })),
   }
 }
