@@ -292,7 +292,7 @@ export function ClassDashboardSessionListItem({
   openingId?: string | null
 }) {
   return (
-    <div className="group/session conet-surface grid overflow-hidden transition duration-300 hover:-translate-y-0.5 hover:shadow-md grid-cols-[10.5rem_minmax(0,1fr)] sm:grid-cols-[14rem_minmax(0,1fr)] md:grid-cols-[16rem_minmax(0,1fr)] lg:grid-cols-[18rem_minmax(0,1fr)]">
+    <div className="group/session conet-surface grid overflow-hidden transition duration-300 hover:-translate-y-0.5 hover:shadow-md grid-cols-[13rem_minmax(0,1fr)] sm:grid-cols-[18rem_minmax(0,1fr)] md:grid-cols-[22rem_minmax(0,1fr)] lg:grid-cols-[minmax(26rem,38%)_minmax(0,1fr)]">
       <SessionArtwork index={artIndex} variant="side" />
       <div className="flex min-w-0 flex-1 flex-col">
         <SessionHeader

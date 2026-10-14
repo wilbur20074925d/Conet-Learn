@@ -65,7 +65,7 @@ export default function SessionArtwork({
       src={sessionFoodImage(index)}
       alt=""
       fill
-      sizes={variant === "side" ? "(min-width: 1024px) 18rem, (min-width: 640px) 14rem, 10.5rem" : "(min-width: 1152px) 72rem, 100vw"}
+      sizes={variant === "side" ? "(min-width: 1024px) 26rem, (min-width: 768px) 22rem, (min-width: 640px) 18rem, 13rem" : "(min-width: 1152px) 72rem, 100vw"}
       className="object-cover object-[center_46%] transition duration-700 ease-out group-hover/session:scale-[1.035]"
     />
   )
