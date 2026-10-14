@@ -93,11 +93,31 @@ const config: Config = {
   				to: {
   					height: '0'
   				}
-  			}
+  			},
+  			'welcome-float': {
+  				'0%, 100%': { transform: 'translateY(0)' },
+  				'50%': { transform: 'translateY(-8px)' },
+  			},
+  			'welcome-fade-up': {
+  				from: { opacity: '0', transform: 'translateY(12px)' },
+  				to: { opacity: '1', transform: 'translateY(0)' },
+  			},
+  			'welcome-ring-pulse': {
+  				'0%, 100%': { transform: 'scale(1)', opacity: '0.25' },
+  				'50%': { transform: 'scale(1.05)', opacity: '0.45' },
+  			},
+  			'welcome-shimmer': {
+  				'0%': { backgroundPosition: '200% 0' },
+  				'100%': { backgroundPosition: '-200% 0' },
+  			},
   		},
   		animation: {
   			'accordion-down': 'accordion-down 0.2s ease-out',
-  			'accordion-up': 'accordion-up 0.2s ease-out'
+  			'accordion-up': 'accordion-up 0.2s ease-out',
+  			'welcome-float': 'welcome-float 4.5s ease-in-out infinite',
+  			'welcome-fade-up': 'welcome-fade-up 0.55s ease-out both',
+  			'welcome-ring-pulse': 'welcome-ring-pulse 3s ease-in-out infinite',
+  			'welcome-shimmer': 'welcome-shimmer 2.8s linear infinite',
   		}
   	}
   },

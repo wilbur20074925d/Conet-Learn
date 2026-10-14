@@ -1,12 +1,18 @@
 "use client"
 
-import { useEffect, useRef, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { ArrowLeft, PenLine, UserCog, Users } from "lucide-react"
 import BrandLogo from "@/components/brand-logo"
+import { StudentFigureAvatar } from "@/components/student-figure-avatar"
 import PendingLink from "@/components/pending-link"
 import LogoutButton from "@/components/logout-button"
 import SessionMaterialsButton from "@/components/session-materials-button"
 import type { StudentWorkspaceMode } from "@/components/student-workspace"
+import {
+  buildStudentFigureIndexMap,
+  studentFigureIndexForUserId,
+  type StudentFigureMember,
+} from "@/lib/student-figure-avatars"
 import { cn } from "@/lib/utils"
 
 const STUDENT_NOTES = [
@@ -41,6 +47,8 @@ function initialOf(name: string) {
 export default function ClassroomHeader({
   name,
   role,
+  profileId,
+  groupMembers,
   groupName,
   showWorkspaceNav = false,
   showDashboardLink = false,
@@ -53,6 +61,8 @@ export default function ClassroomHeader({
 }: {
   name: string
   role: "teacher" | "student" | "ai"
+  profileId?: string
+  groupMembers?: StudentFigureMember[]
   groupName?: string | null
   showWorkspaceNav?: boolean
   showDashboardLink?: boolean
@@ -87,6 +97,15 @@ export default function ClassroomHeader({
   }
 
   const label = note ?? `${hello}, ${firstName(name)}`
+  const studentFigureIndex = useMemo(() => {
+    if (isTeacher || !profileId) return null
+    const members: StudentFigureMember[] =
+      groupMembers && groupMembers.length > 0
+        ? groupMembers
+        : [{ id: profileId, name }]
+    const map = buildStudentFigureIndexMap(members)
+    return map.get(profileId) ?? studentFigureIndexForUserId(profileId)
+  }, [groupMembers, isTeacher, name, profileId])
 
   return (
     <header className="relative z-30 shrink-0 border-b border-slate-200/80 bg-white/95 backdrop-blur-md">
@@ -118,9 +137,19 @@ export default function ClassroomHeader({
             title={isTeacher ? "Tap for a note" : "Tap for a cheer"}
             className="group flex h-9 min-w-0 items-center gap-2 overflow-hidden rounded-full border border-slate-200 bg-white py-1 pl-1 pr-3 text-left shadow-sm transition duration-200 hover:-translate-y-px hover:border-slate-300 hover:shadow-md active:scale-[0.99]"
           >
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[11px] font-bold text-white transition duration-200 group-hover:scale-105 group-active:scale-95">
-              {initialOf(name)}
-            </span>
+            {studentFigureIndex !== null ? (
+              <StudentFigureAvatar
+                figureIndex={studentFigureIndex}
+                size="sm"
+                ring={false}
+                title={name}
+                className="h-7 w-7 transition duration-200 group-hover:scale-105 group-active:scale-95"
+              />
+            ) : (
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[11px] font-bold text-white transition duration-200 group-hover:scale-105 group-active:scale-95">
+                {initialOf(name)}
+              </span>
+            )}
             <span key={note ? noteId : "hello"} className="truncate text-sm font-semibold text-slate-900 animate-in fade-in duration-300">
               {label}
             </span>

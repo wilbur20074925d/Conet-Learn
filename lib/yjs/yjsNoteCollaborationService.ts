@@ -20,6 +20,7 @@ import {
   DOC_TITLE_META_KEY,
   type NoteCommentCollab,
 } from "@/lib/yjs/yjsNoteSchema"
+import { buildCollaborationAwarenessUser } from "@/lib/collaboration-cursor-render"
 import { normalizeYjsWsOrigin } from "@/lib/yjs/normalizeYjsWsOrigin"
 
 export interface YjsNoteConnectionConfig {
@@ -28,6 +29,7 @@ export interface YjsNoteConnectionConfig {
   userId: string;
   userName?: string;
   color?: string;
+  figureIndex?: number;
   /** When true, join the document without publishing a name or cursor. */
   silent?: boolean;
 }
@@ -135,12 +137,15 @@ export class YjsNoteCollaborationService {
     if (this.config.silent) {
       this.awareness.setLocalState(null);
     } else {
-      this.awareness.setLocalStateField('user', {
-        userId: this.config.userId,
-        userName: this.config.userName || '',
-        color: this.config.color || colorForUserId(this.config.userId),
-        timestamp: Date.now(),
-      });
+      this.awareness.setLocalStateField(
+        'user',
+        buildCollaborationAwarenessUser({
+          userId: this.config.userId,
+          name: this.config.userName || 'User',
+          color: this.config.color || colorForUserId(this.config.userId),
+          figureIndex: this.config.figureIndex ?? 0,
+        }),
+      );
     }
     this.awareness.on('change', () => {
       this.awarenessListeners.forEach((l) => l());

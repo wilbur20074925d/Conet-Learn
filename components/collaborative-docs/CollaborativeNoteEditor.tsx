@@ -27,6 +27,10 @@ import { Extension, Mark, mergeAttributes } from '@tiptap/core';
 import * as Y from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import {
+  buildCollaborationAwarenessUser,
+  renderCollaborationCursor,
+} from '@/lib/collaboration-cursor-render';
+import {
   Bold,
   Italic,
   Underline as UnderlineIcon,
@@ -212,7 +216,7 @@ export interface CollaborativeNoteEditorProps {
   ydoc: Y.Doc;
   fragment?: Y.XmlFragment;
   awareness: Awareness;
-  user: { name: string; color: string };
+  user: { userId: string; name: string; color: string; figureIndex: number };
   editable?: boolean;
   placeholder?: string;
   className?: string;
@@ -1423,6 +1427,17 @@ export const CollaborativeNoteEditor: React.FC<CollaborativeNoteEditorProps> = (
   const editorRef = useRef<Editor | null>(null);
   const fragment = fragmentProp || ydoc.getXmlFragment('prosemirror');
 
+  const awarenessUser = useMemo(
+    () =>
+      buildCollaborationAwarenessUser({
+        userId: user.userId,
+        name: user.name,
+        color: user.color,
+        figureIndex: user.figureIndex,
+      }),
+    [user.userId, user.name, user.color, user.figureIndex],
+  );
+
   const extensions = useMemo(
     () => [
       StarterKit.configure({
@@ -1473,15 +1488,13 @@ export const CollaborativeNoteEditor: React.FC<CollaborativeNoteEditorProps> = (
         ? [
             CollaborationCursor.configure({
               provider: { awareness } as any,
-              user: {
-                name: user.name,
-                color: user.color,
-              },
+              user: awarenessUser,
+              render: renderCollaborationCursor,
             }),
           ]
         : []),
     ],
-    [ydoc, awareness, user.name, user.color, placeholder, publishPresence]
+    [ydoc, awareness, awarenessUser, placeholder, publishPresence]
   );
 
   const editor = useEditor(
@@ -1542,6 +1555,11 @@ export const CollaborativeNoteEditor: React.FC<CollaborativeNoteEditorProps> = (
   }, [editor, editable]);
 
   useEffect(() => {
+    if (!editor || !publishPresence) return;
+    editor.commands.updateUser(awarenessUser);
+  }, [editor, awarenessUser, publishPresence]);
+
+  useEffect(() => {
     if (!editor || seededRef.current || !seedHtml) return;
     const isEmpty = editor.isEmpty || editor.getText().trim() === '';
     if (!isEmpty || fragment.length > 0) {
@@ -1588,18 +1606,36 @@ export const CollaborativeNoteEditor: React.FC<CollaborativeNoteEditorProps> = (
           word-break: normal;
         }
         .collaboration-cursor__label {
-          border-radius: 3px 3px 3px 0;
+          align-items: center;
+          background: #171717;
+          border: 2px solid #fff;
+          border-radius: 9999px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
           color: #fff;
+          display: inline-flex;
           font-size: 10px;
           font-style: normal;
           font-weight: 600;
+          gap: 4px;
           left: -1px;
-          line-height: normal;
-          padding: 0.1rem 0.3rem;
+          line-height: 1;
+          max-width: 12rem;
+          padding: 2px 6px 2px 2px;
           position: absolute;
-          top: -1.4em;
+          top: -1.65em;
           user-select: none;
           white-space: nowrap;
+        }
+        .collaboration-cursor__avatar {
+          border-radius: 9999px;
+          flex-shrink: 0;
+          height: 16px;
+          object-fit: cover;
+          width: 16px;
+        }
+        .collaboration-cursor__name {
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         .ProseMirror p.is-editor-empty:first-child::before {
           color: #94a3b8;

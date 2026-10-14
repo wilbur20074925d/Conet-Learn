@@ -27,6 +27,7 @@ export interface UseYjsNoteCollaborationOptions {
   seedTitle?: string;
   seedHtml?: string;
   silent?: boolean;
+  figureIndex?: number;
 }
 
 export function useYjsNoteCollaboration(options: UseYjsNoteCollaborationOptions) {
@@ -39,6 +40,7 @@ export function useYjsNoteCollaboration(options: UseYjsNoteCollaborationOptions)
     seedTitle = '',
     seedHtml = '',
     silent = false,
+    figureIndex = 0,
   } = options;
 
   const [isConnected, setIsConnected] = useState(false);
@@ -72,6 +74,7 @@ export function useYjsNoteCollaboration(options: UseYjsNoteCollaborationOptions)
       userId,
       userName,
       color,
+      figureIndex,
       silent,
     });
     serviceRef.current = service;
@@ -124,7 +127,7 @@ export function useYjsNoteCollaboration(options: UseYjsNoteCollaborationOptions)
     };
     // seed only used on connect
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, noteId, userId, userName, wsUrl, color, silent]);
+  }, [enabled, noteId, userId, userName, wsUrl, color, figureIndex, silent]);
 
   const setTitle = useCallback((next: string) => {
     setTitleState(next);

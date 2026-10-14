@@ -15,6 +15,11 @@ export function studentFigureImage(index: number) {
   return STUDENT_FIGURES[((index % count) + count) % count]
 }
 
+/** Public URL for DOM (collaboration cursors, etc.). */
+export function studentFigureImageSrc(index: number): string {
+  return studentFigureImage(index).src
+}
+
 export type StudentFigureMember = { id: string; name: string }
 
 /** One stable avatar per groupmate: sorted by name, figures 1–6 then wrap. */
@@ -28,4 +33,21 @@ export function buildStudentFigureIndexMap(members: StudentFigureMember[]) {
   const map = new Map<string, number>()
   sorted.forEach((member, index) => map.set(member.id, index % STUDENT_FIGURE_COUNT))
   return map
+}
+
+/** Stable fallback when group membership is unavailable. */
+export function studentFigureIndexForUserId(userId: string): number {
+  let hash = 0
+  for (let i = 0; i < userId.length; i++) {
+    hash = userId.charCodeAt(i) + ((hash << 5) - hash)
+  }
+  return Math.abs(hash) % STUDENT_FIGURE_COUNT
+}
+
+export function figureIndexForUser(userId: string, members?: StudentFigureMember[]): number {
+  if (members?.length) {
+    const fromGroup = buildStudentFigureIndexMap(members).get(userId)
+    if (fromGroup !== undefined) return fromGroup
+  }
+  return studentFigureIndexForUserId(userId)
 }

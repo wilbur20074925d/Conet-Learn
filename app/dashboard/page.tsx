@@ -78,7 +78,7 @@ export default async function DashboardPage({
     if (!catalog.ok) {
       return (
         <div className="conet-page-bg flex min-h-dvh flex-col text-slate-900">
-          <ConsentWrapper userId={ctx.profileId} />
+          <ConsentWrapper userId={ctx.profileId} userName={ctx.name} />
           <ClassroomHeader name={ctx.name} role="teacher" showMaterials={false} showAccountsLink />
           <div className="mx-auto w-full max-w-6xl px-4 pt-6 sm:px-6">
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950">
@@ -124,7 +124,7 @@ export default async function DashboardPage({
   if (ctx.memberships.length === 0) {
     return (
       <div className="conet-page-bg flex min-h-dvh flex-col text-slate-900">
-        <ConsentWrapper userId={ctx.profileId} />
+        <ConsentWrapper userId={ctx.profileId} userName={ctx.name} />
         <ClassroomHeader name={ctx.name} role="student" showMaterials={false} />
         <StudentAwaitingGroup />
       </div>
@@ -159,7 +159,7 @@ export default async function DashboardPage({
 
   return (
     <div className="conet-page-bg flex min-h-dvh flex-col text-slate-900">
-      <ConsentWrapper userId={ctx.profileId} />
+      <ConsentWrapper userId={ctx.profileId} userName={ctx.name} />
       <ClassroomHeader name={ctx.name} role="student" showMaterials={false} />
       <ClassDashboard role="student" classes={classes} showMaterials={false} joinedGroupIds={ctx.groupIds} />
     </div>

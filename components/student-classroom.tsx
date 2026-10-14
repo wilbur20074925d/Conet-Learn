@@ -70,10 +70,15 @@ export default function StudentClassroom({
 
   return (
     <div className="conet-page-bg flex h-dvh flex-col overflow-hidden text-slate-900">
-      <ConsentWrapper userId={currentUserId} />
+      <ConsentWrapper userId={currentUserId} userName={currentUserName} />
       <ClassroomHeader
         name={name}
         role="student"
+        profileId={currentUserId}
+        groupMembers={[
+          { id: currentUserId, name: currentUserName },
+          ...peers.map((peer) => ({ id: peer.id, name: peer.name })),
+        ]}
         groupName={groupName}
         showWorkspaceNav
         showDashboardLink

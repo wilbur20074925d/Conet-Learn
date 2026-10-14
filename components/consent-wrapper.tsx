@@ -5,9 +5,10 @@ import WelcomeModal from "./welcome-modal"
 
 interface ConsentWrapperProps {
   userId: string
+  userName?: string | null
 }
 
-export default function ConsentWrapper({ userId }: ConsentWrapperProps) {
+export default function ConsentWrapper({ userId, userName }: ConsentWrapperProps) {
   const [consentHandled, setConsentHandled] = useState(false)
 
   const handleConsentGiven = (consent: boolean) => {
@@ -16,9 +17,6 @@ export default function ConsentWrapper({ userId }: ConsentWrapperProps) {
   }
 
   return (
-    <WelcomeModal 
-      userId={userId} 
-      onConsentGiven={handleConsentGiven}
-    />
+    <WelcomeModal userId={userId} userName={userName} onConsentGiven={handleConsentGiven} />
   )
 }

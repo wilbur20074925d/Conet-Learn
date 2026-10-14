@@ -5,15 +5,22 @@
  * Ported from StreamLearn-pro NoteWorkspaceEditor for Co-net Learn.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { Editor } from "@tiptap/react"
+import Image from "next/image"
 import { Clock, History, Wifi, WifiOff } from "lucide-react"
+import submitFigure from "@/components/figure/submit.png"
 import { CollaborativeNoteEditor } from "@/components/collaborative-docs/CollaborativeNoteEditor"
 import {
   DocumentSessionLoader,
   type LoadStage,
 } from "@/components/collaborative-docs/DocumentSessionLoader"
 import { SubmissionBody, submittedAt } from "@/components/collaborative-docs/group-post-history"
+import { StudentFigureAvatar } from "@/components/student-figure-avatar"
+import {
+  buildStudentFigureIndexMap,
+  studentFigureIndexForUserId,
+} from "@/lib/student-figure-avatars"
 import {
   Dialog,
   DialogContent,
@@ -64,6 +71,10 @@ export function NoteWorkspaceEditor({
   readOnly = false,
 }: NoteWorkspaceEditorProps) {
   const seed = parseStoredNote(note.content)
+  const initialFigureIndex = useMemo(
+    () => studentFigureIndexForUserId(currentUser.id),
+    [currentUser.id],
+  )
   const {
     isConnected,
     isSynced,
@@ -85,6 +96,7 @@ export function NoteWorkspaceEditor({
     seedTitle: collapseRepeatedTitle(note.title || ""),
     seedHtml: seed.html || note.content || "",
     silent: readOnly,
+    figureIndex: initialFigureIndex,
   })
 
   const [loadStage, setLoadStage] = useState<LoadStage>("finding")
@@ -254,6 +266,21 @@ export function NoteWorkspaceEditor({
 
   const selected = submissions.find((item) => item.id === selectedId) || null
 
+  const figureIndexByUserId = useMemo(() => {
+    const byId = new Map<string, { id: string; name: string }>()
+    byId.set(currentUser.id, { id: currentUser.id, name: currentUser.name || "User" })
+    for (const collaborator of collaborators) {
+      byId.set(collaborator.userId, {
+        id: collaborator.userId,
+        name: collaborator.userName || "User",
+      })
+    }
+    return buildStudentFigureIndexMap([...byId.values()])
+  }, [collaborators, currentUser.id, currentUser.name])
+
+  const currentUserFigureIndex =
+    figureIndexByUserId.get(currentUser.id) ?? initialFigureIndex
+
   if (!sessionReady || !ydoc || !fragment || !awareness) {
     return (
       <DocumentSessionLoader
@@ -281,14 +308,14 @@ export function NoteWorkspaceEditor({
         <div className="flex items-center gap-2">
           <div className="flex -space-x-1.5">
             {collaborators.slice(0, 5).map((c) => (
-              <div
+              <StudentFigureAvatar
                 key={c.clientId}
-                className="flex h-6 w-6 items-center justify-center rounded-full text-[9px] font-bold text-white ring-2 ring-white"
-                style={{ backgroundColor: c.color }}
+                figureIndex={
+                  figureIndexByUserId.get(c.userId) ?? studentFigureIndexForUserId(c.userId)
+                }
+                size="sm"
                 title={c.userName}
-              >
-                {(c.userName || "U")[0].toUpperCase()}
-              </div>
+              />
             ))}
           </div>
           <span
@@ -349,8 +376,10 @@ export function NoteWorkspaceEditor({
         fragment={fragment}
         awareness={awareness}
         user={{
+          userId: currentUser.id,
           name: currentUser.name || "User",
           color: userColor,
+          figureIndex: currentUserFigureIndex,
         }}
         editable={!readOnly}
         publishPresence={!readOnly}
@@ -362,20 +391,31 @@ export function NoteWorkspaceEditor({
       />
 
       <Dialog open={successOpen} onOpenChange={setSuccessOpen}>
-        <DialogContent className="max-w-sm gap-0 overflow-hidden rounded-3xl border-slate-200 p-0">
-          <div className="border-b border-slate-100 px-5 pb-4 pt-5 pr-12">
-            <DialogHeader className="space-y-1 text-left">
-              <DialogTitle className="text-lg font-bold tracking-tight text-slate-900">Submitted successfully</DialogTitle>
-              <DialogDescription className="text-sm leading-6 text-slate-500">
-                This copy is saved. The group post stays on the page, so anyone in the group can keep writing and submit again.
+        <DialogContent className="max-w-[24rem] gap-0 overflow-hidden rounded-[28px] border-slate-200 p-0 shadow-xl">
+          <div className="border-b border-slate-100 bg-slate-50 px-6 pb-1 pt-8">
+            <div className="relative mx-auto h-52 w-full max-w-[280px]">
+              <Image
+                src={submitFigure}
+                alt="Submitted successfully"
+                fill
+                sizes="280px"
+                className="object-contain object-center"
+              />
+            </div>
+          </div>
+          <div className="px-6 pb-6 pt-4">
+            <DialogHeader className="items-center space-y-1.5 text-center sm:text-center">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-400">Group post</p>
+              <DialogTitle className="text-base font-bold tracking-tight text-slate-900">Submitted successfully</DialogTitle>
+              <DialogDescription className="max-w-xs text-sm leading-6 text-slate-500">
+                This copy is saved. The group post stays on the page, so anyone in the group can keep writing and submit
+                again.
               </DialogDescription>
             </DialogHeader>
-          </div>
-          <div className="flex justify-end px-5 py-4">
             <button
               type="button"
               onClick={() => setSuccessOpen(false)}
-              className="h-9 rounded-xl bg-slate-900 px-3.5 text-sm font-semibold text-white hover:bg-slate-800"
+              className="mt-4 h-10 w-full rounded-xl bg-slate-900 text-sm font-semibold text-white hover:bg-slate-800"
             >
               OK
             </button>

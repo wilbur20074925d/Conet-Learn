@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import { createPortal } from "react-dom"
 import Image from "next/image"
 import * as DialogPrimitive from "@radix-ui/react-dialog"
 import { Loader2, LogOut } from "lucide-react"
@@ -22,6 +23,7 @@ export default function LogoutButton() {
 
   function confirmLogout() {
     if (loggingOut) return
+    setOpen(false)
     setLoggingOut(true)
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
@@ -32,8 +34,9 @@ export default function LogoutButton() {
   }
 
   return (
+    <>
     <Dialog
-      open={open}
+      open={open && !loggingOut}
       onOpenChange={(next) => {
         if (loggingOut) return
         setOpen(next)
@@ -48,6 +51,7 @@ export default function LogoutButton() {
         Logout
       </button>
 
+      {!loggingOut && (
       <DialogPortal>
         <DialogOverlay className="bg-slate-950/25 backdrop-blur-sm" />
         <DialogPrimitive.Content
@@ -100,9 +104,18 @@ export default function LogoutButton() {
           </div>
         </DialogPrimitive.Content>
       </DialogPortal>
-      {loggingOut && (
-        <LoadingScreen overlay label="Signing out" message="Taking you back to the sign-in page…" />
       )}
     </Dialog>
+    {loggingOut &&
+      createPortal(
+        <LoadingScreen
+          overlay
+          className="z-[100]"
+          label="Signing out"
+          message="Taking you back to the sign-in page…"
+        />,
+        document.body,
+      )}
+    </>
   )
 }

@@ -52,8 +52,8 @@ export default async function InClassSessionPage({
   if (!active) {
     return (
       <div className="conet-page-bg flex min-h-dvh flex-col text-slate-900">
-        <ConsentWrapper userId={ctx.profileId} />
-        <ClassroomHeader name={ctx.name} role="student" />
+        <ConsentWrapper userId={ctx.profileId} userName={ctx.name} />
+        <ClassroomHeader name={ctx.name} role="student" profileId={ctx.profileId} />
         <StudentAwaitingGroup />
       </div>
     )
