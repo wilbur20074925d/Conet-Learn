@@ -76,7 +76,7 @@ export default function LoginPage() {
           <div>
             <BrandLogo priority className="h-auto w-full max-w-[250px]" />
             <p className="mt-6 max-w-sm text-balance text-[1.65rem] font-semibold leading-snug tracking-tight text-slate-900">
-              Argue together, then write what the conversation changes.
+              Learn together. Go further.
             </p>
           </div>
 
