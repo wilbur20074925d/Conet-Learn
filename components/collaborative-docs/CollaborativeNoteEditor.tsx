@@ -5,7 +5,8 @@
  * Toolbar mirrors Google Docs (English): fonts, sizes, colors, insert image modal, etc.
  */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import NextImage from 'next/image';
 import { useEditor, EditorContent, type Editor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import Collaboration from '@tiptap/extension-collaboration';
@@ -25,6 +26,22 @@ import TableCell from '@tiptap/extension-table-cell';
 import TableHeader from '@tiptap/extension-table-header';
 import { Extension, Mark, mergeAttributes } from '@tiptap/core';
 import { ConetAuthorMark, createAuthorStampPlugin } from '@/lib/collaborative-author-mark';
+import conetLearnLogo from '@/components/figure/conet-learn.png';
+import {
+  CONET_LEARN_TAGLINE,
+  generateNotePdfBlob,
+  normalizePrintBodyHtml,
+  NOTE_PDF_RENDER_WIDTH_PX,
+  sanitizePdfFileName,
+  type PrintDocumentMode,
+} from '@/lib/note-print-pdf';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import * as Y from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import {
@@ -47,6 +64,8 @@ import {
   MessageSquare,
   Highlighter,
   Printer,
+  Download,
+  Loader2,
   Minus,
   Plus,
   ChevronDown,
@@ -758,132 +777,281 @@ const IMAGE_WIDTHS = [
   { label: 'Full', value: '100%', title: 'Full width' },
 ] as const;
 
-/** Print only the document body (opens a clean print window). */
-function printNoteDocument(editor: Editor, title?: string) {
-  const docTitle = (title || '').trim() || 'Untitled document';
-  const contentHtml = editor.getHTML();
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8" />
-  <title>${escapeHtml(docTitle)}</title>
-  <style>
-    @page { margin: 18mm 16mm; }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      padding: 0;
-      color: #0f172a;
-      font-family: Arial, Helvetica, sans-serif;
-      font-size: 12pt;
-      line-height: 1.6;
-    }
-    h1 { font-size: 22pt; margin: 0 0 16pt; line-height: 1.25; }
-    h2 { font-size: 16pt; margin: 18pt 0 8pt; }
-    h3 { font-size: 14pt; margin: 14pt 0 6pt; }
-    h4 { font-size: 12.5pt; margin: 12pt 0 6pt; }
-    p { margin: 0 0 8pt; }
-    ul { list-style: disc; padding-left: 1.4em; margin: 6pt 0; }
-    ol { list-style: decimal; padding-left: 1.4em; margin: 6pt 0; }
-    li { margin: 2pt 0; }
-    li p { margin: 0; }
-    a { color: #1a73e8; text-decoration: underline; }
-    img {
-      max-width: 100%;
-      height: auto;
-      display: block;
-      margin: 10pt auto;
-      page-break-inside: avoid;
-    }
-    img[data-align="left"] { margin-left: 0; margin-right: auto; }
-    img[data-align="right"] { margin-left: auto; margin-right: 0; }
-    img[data-align="center"] { margin-left: auto; margin-right: auto; }
-    blockquote {
-      margin: 8pt 0;
-      padding-left: 12pt;
-      border-left: 3px solid #cbd5e1;
-      color: #334155;
-    }
-    table { border-collapse: collapse; width: 100%; margin: 10pt 0; }
-    th, td { border: 1px solid #cbd5e1; padding: 6pt 8pt; text-align: left; }
-    .doc-title {
-      font-size: 22pt;
-      font-weight: 700;
-      margin: 0 0 18pt;
-      padding-bottom: 10pt;
-      border-bottom: 1px solid #e2e8f0;
-    }
-    .doc-body { max-width: 100%; }
-    .comment-mark, [data-comment-id] {
-      background: transparent !important;
-      border: none !important;
-    }
-    @media print {
-      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    }
-  </style>
-</head>
-<body>
-  <h1 class="doc-title">${escapeHtml(docTitle)}</h1>
-  <div class="doc-body">${contentHtml}</div>
-</body>
-</html>`;
+const NotePdfViewerDialog: React.FC<{
+  open: boolean;
+  url: string | null;
+  fileName: string;
+  onClose: () => void;
+}> = ({ open, url, fileName, onClose }) => (
+  <Dialog
+    open={open}
+    onOpenChange={(next) => {
+      if (!next) onClose();
+    }}
+  >
+    <DialogContent className="flex max-h-[92vh] max-w-4xl flex-col gap-0 overflow-hidden p-0 sm:max-w-4xl">
+      <DialogHeader className="border-b border-slate-200 px-5 py-4 pr-12">
+        <DialogTitle className="text-base">PDF preview</DialogTitle>
+        <DialogDescription className="text-xs">
+          Your document is ready. Download or print from here — no HTML page opens.
+        </DialogDescription>
+      </DialogHeader>
+      {url ? (
+        <iframe
+          title="Document PDF"
+          src={`${url}#toolbar=1&navpanes=0`}
+          className="h-[min(78vh,720px)] w-full border-0 bg-slate-100"
+        />
+      ) : (
+        <div className="flex h-48 items-center justify-center text-sm text-slate-500">Loading PDF…</div>
+      )}
+      <div className="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3">
+        <button
+          type="button"
+          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-white/80"
+          onClick={onClose}
+        >
+          Close
+        </button>
+        {url ? (
+          <a
+            href={url}
+            download={fileName}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-white/80"
+          >
+            <Download className="h-3.5 w-3.5" />
+            Download PDF
+          </a>
+        ) : null}
+        {url ? (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800"
+            onClick={() => {
+              const win = window.open(url, '_blank', 'noopener,noreferrer');
+              win?.focus();
+            }}
+          >
+            <Printer className="h-3.5 w-3.5" />
+            Open in new tab
+          </button>
+        ) : null}
+      </div>
+    </DialogContent>
+  </Dialog>
+);
 
-  const printWindow = window.open('', '_blank', 'noopener,noreferrer');
-  if (!printWindow) {
-    window.alert('Please allow pop-ups to print this document.');
-    return;
-  }
+const PrintPreviewPanel: React.FC<{
+  open: boolean;
+  onClose: () => void;
+  editor: Editor;
+  documentTitle?: string;
+  onPdfReady: (payload: { url: string; fileName: string }) => void;
+}> = ({ open, onClose, editor, documentTitle, onPdfReady }) => {
+  const [mode, setMode] = useState<PrintDocumentMode>('full');
+  const [previewTick, setPreviewTick] = useState(0);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
 
-  printWindow.document.open();
-  printWindow.document.write(html);
-  printWindow.document.close();
+  useEffect(() => {
+    if (!open) return;
+    const refresh = () => setPreviewTick((n) => n + 1);
+    editor.on('transaction', refresh);
+    return () => {
+      editor.off('transaction', refresh);
+    };
+  }, [open, editor]);
 
-  let printed = false;
-  const runPrint = () => {
-    if (printed) return;
-    printed = true;
+  useEffect(() => {
+    if (!open) {
+      setExportError('');
+      setExporting(false);
+    }
+  }, [open]);
+
+  const docTitle = (documentTitle || '').trim() || 'Untitled document';
+  const { bodyHtml, legend } = useMemo(() => {
+    void previewTick;
+    return normalizePrintBodyHtml(editor.getHTML(), mode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- previewTick refreshes live doc
+  }, [editor, mode, previewTick]);
+
+  const handleExportPdf = async () => {
+    setExporting(true);
+    setExportError('');
     try {
-      printWindow.focus();
-      printWindow.print();
+      const { bodyHtml: exportBody, legend: exportLegend } = normalizePrintBodyHtml(
+        editor.getHTML(),
+        mode,
+      );
+      const blob = await generateNotePdfBlob({
+        docTitle,
+        bodyHtml: exportBody,
+        mode,
+        legend: exportLegend,
+        logoUrl: conetLearnLogo.src,
+      });
+      const url = URL.createObjectURL(blob);
+      onPdfReady({ url, fileName: sanitizePdfFileName(docTitle) });
+      onClose();
+    } catch {
+      setExportError('Could not create PDF. Try again in a moment.');
     } finally {
-      window.setTimeout(() => {
-        try {
-          printWindow.close();
-        } catch {
-          /* ignore */
-        }
-      }, 400);
+      setExporting(false);
     }
   };
 
-  const images = Array.from(printWindow.document.images || []);
-  const pending = images.filter((img) => !img.complete);
-  if (pending.length === 0) {
-    window.setTimeout(runPrint, 50);
-    return;
-  }
+  if (!open) return null;
 
-  let remaining = pending.length;
-  const onDone = () => {
-    remaining -= 1;
-    if (remaining <= 0) runPrint();
-  };
-  pending.forEach((img) => {
-    img.addEventListener('load', onDone, { once: true });
-    img.addEventListener('error', onDone, { once: true });
-  });
-  // Safety timeout if an image hangs
-  window.setTimeout(runPrint, 2500);
-}
+  const previewScale = 0.19;
 
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
+  return (
+    <>
+      <div className="fixed inset-0 z-40" onClick={onClose} aria-hidden />
+      <div
+        className="absolute left-0 top-full z-50 mt-1.5 w-[min(360px,calc(100vw-1.5rem))] rounded-xl border border-slate-200 bg-white p-3 shadow-lg shadow-slate-200/80 ring-1 ring-slate-900/5"
+        role="dialog"
+        aria-label="Print preview"
+      >
+        <p className="text-xs font-semibold text-slate-900">Export as PDF</p>
+        <p className="mt-0.5 text-[11px] text-slate-500">
+          Pick a layout — we generate a framed PDF with the Co-Net Learn header.
+        </p>
+
+        <fieldset className="mt-3 space-y-2 border-0 p-0">
+          <legend className="sr-only">PDF version</legend>
+          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
+            <input
+              type="radio"
+              name="print-mode"
+              className="mt-0.5"
+              checked={mode === 'full'}
+              onChange={() => setMode('full')}
+              disabled={exporting}
+            />
+            <span className="min-w-0">
+              <span className="block text-[11px] font-medium text-slate-900">Full document</span>
+              <span className="block text-[10px] text-slate-500">Clean copy without author highlights</span>
+            </span>
+          </label>
+          <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 px-2.5 py-2 hover:bg-slate-50">
+            <input
+              type="radio"
+              name="print-mode"
+              className="mt-0.5"
+              checked={mode === 'contributions'}
+              onChange={() => setMode('contributions')}
+              disabled={exporting}
+            />
+            <span className="min-w-0">
+              <span className="block text-[11px] font-medium text-slate-900">With contributions</span>
+              <span className="block text-[10px] text-slate-500">
+                Each student&apos;s text highlighted in a different color
+              </span>
+            </span>
+          </label>
+        </fieldset>
+
+        <div className="mt-3 rounded-lg border border-slate-200 bg-gradient-to-b from-slate-100 to-slate-200/80 p-2">
+          <p className="mb-1.5 text-center text-[10px] font-medium uppercase tracking-wide text-slate-500">
+            Preview
+          </p>
+          <div
+            className="mx-auto h-[180px] w-[118px] overflow-hidden rounded-md border border-slate-300/80 bg-slate-200 shadow-inner"
+            aria-hidden
+          >
+            <div
+              className="origin-top-left rounded-md bg-gradient-to-br from-slate-100 to-slate-200 p-2 text-slate-900"
+              style={{
+                width: NOTE_PDF_RENDER_WIDTH_PX,
+                transform: `scale(${previewScale})`,
+              }}
+            >
+              <div className="overflow-hidden rounded-lg border-2 border-slate-300 bg-white shadow-md">
+                <div className="flex items-center gap-2 border-b border-slate-200 bg-gradient-to-r from-slate-50 via-indigo-50/80 to-slate-50 px-3 py-2">
+                  <NextImage
+                    src={conetLearnLogo}
+                    alt=""
+                    className="h-7 w-auto object-contain"
+                    priority
+                  />
+                  <div className="min-w-0">
+                    <p className="text-[8px] font-semibold uppercase tracking-wider text-slate-500">
+                      Co-Net Learn
+                    </p>
+                    <p className="truncate text-[11px] font-bold leading-tight text-slate-900">
+                      {CONET_LEARN_TAGLINE}
+                    </p>
+                  </div>
+                </div>
+                <div
+                  className="px-3 py-2"
+                  style={{ fontFamily: 'Arial, Helvetica, sans-serif', fontSize: '12pt', lineHeight: 1.5 }}
+                >
+                  <h1
+                    className="border-b border-slate-200 pb-1 text-[14pt] font-bold"
+                    style={{ margin: '0 0 8pt' }}
+                  >
+                    {docTitle}
+                  </h1>
+                  {mode === 'contributions' && legend.length > 0 ? (
+                    <div className="mb-2 rounded border border-slate-200 bg-slate-50 p-1.5 text-[8pt]">
+                      <div className="mb-1 font-semibold">Contributions</div>
+                      <div className="flex flex-wrap gap-1">
+                        {legend.slice(0, 4).map((item) => (
+                          <span
+                            key={item.authorId}
+                            className="inline-flex items-center gap-0.5 rounded px-0.5"
+                            style={{ background: item.highlightColor }}
+                          >
+                            {item.authorName}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                  <div dangerouslySetInnerHTML={{ __html: bodyHtml }} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {mode === 'contributions' && legend.length === 0 ? (
+          <p className="mt-2 text-[10px] text-amber-700">
+            No attributed contributions yet — PDF will match the full document.
+          </p>
+        ) : null}
+
+        {exportError ? <p className="mt-2 text-[10px] text-red-600">{exportError}</p> : null}
+
+        <div className="mt-3 flex justify-end gap-2">
+          <button
+            type="button"
+            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            onClick={onClose}
+            disabled={exporting}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+            onClick={() => void handleExportPdf()}
+            disabled={exporting}
+          >
+            {exporting ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Printer className="h-3.5 w-3.5" />
+            )}
+            {exporting ? 'Creating PDF…' : 'Create PDF'}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+};
 
 export const CollaborativeNoteToolbar: React.FC<{
   editor: Editor | null;
@@ -905,6 +1073,21 @@ export const CollaborativeNoteToolbar: React.FC<{
   const [linkUrl, setLinkUrl] = useState('');
   const [linkText, setLinkText] = useState('');
   const [showImage, setShowImage] = useState(false);
+  const [printPreviewOpen, setPrintPreviewOpen] = useState(false);
+  const [pdfView, setPdfView] = useState<{ url: string; fileName: string } | null>(null);
+
+  const closePdfView = useCallback(() => {
+    setPdfView((current) => {
+      if (current?.url) URL.revokeObjectURL(current.url);
+      return null;
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (pdfView?.url) URL.revokeObjectURL(pdfView.url);
+    };
+  }, [pdfView?.url]);
 
   useEffect(() => {
     if (!editor) return;
@@ -944,6 +1127,7 @@ export const CollaborativeNoteToolbar: React.FC<{
     setColorOpen(false);
     setHighlightOpen(false);
     setAlignOpen(false);
+    setPrintPreviewOpen(false);
   };
 
   const bumpSize = (delta: number) => {
@@ -962,9 +1146,35 @@ export const CollaborativeNoteToolbar: React.FC<{
       >
         {meta}
         <div className="flex flex-wrap items-center gap-0.5 px-2 py-1 sm:px-2.5">
-        <ToolbarButton title="Print" onClick={() => printNoteDocument(editor, documentTitle)}>
-          <Printer className="h-3.5 w-3.5" />
-        </ToolbarButton>
+        <div className="relative">
+          <ToolbarButton
+            title="Print"
+            active={printPreviewOpen}
+            onClick={() => {
+              setStyleOpen(false);
+              setFontOpen(false);
+              setSizeOpen(false);
+              setColorOpen(false);
+              setHighlightOpen(false);
+              setAlignOpen(false);
+              setPrintPreviewOpen((open) => !open);
+            }}
+          >
+            <Printer className="h-3.5 w-3.5" />
+          </ToolbarButton>
+          <PrintPreviewPanel
+            open={printPreviewOpen}
+            onClose={() => setPrintPreviewOpen(false)}
+            editor={editor}
+            documentTitle={documentTitle}
+            onPdfReady={(payload) => {
+              setPdfView((current) => {
+                if (current?.url) URL.revokeObjectURL(current.url);
+                return payload;
+              });
+            }}
+          />
+        </div>
         <Divider />
 
         {/* Styles */}
@@ -1400,6 +1610,13 @@ export const CollaborativeNoteToolbar: React.FC<{
         onInsert={(src) => {
           editor.chain().focus().setImage({ src }).run();
         }}
+      />
+
+      <NotePdfViewerDialog
+        open={Boolean(pdfView)}
+        url={pdfView?.url ?? null}
+        fileName={pdfView?.fileName ?? 'document.pdf'}
+        onClose={closePdfView}
       />
     </>
   );
